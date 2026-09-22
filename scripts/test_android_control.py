@@ -46,11 +46,6 @@ class AndroidControlTests(unittest.TestCase):
         )
         self.assertEqual([e["label"] for e in android.parse_ui_xml(xml)], ["OK"])
 
-    def test_endpoint_validation(self):
-        android.validate_endpoint("127.0.0.1:5555")
-        with self.assertRaises(android.ControlError):
-            android.validate_endpoint("localhost;rm:5555")
-
     def test_named_argument_schema(self):
         args = android.build_parser().parse_args([
             "--action", "tap", "--target", "device-1", "--x", "1", "--y", "2"

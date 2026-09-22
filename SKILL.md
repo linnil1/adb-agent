@@ -1,6 +1,6 @@
 ---
 name: android-device-control
-description: Inspect and operate an authorized Android phone or emulator through ADB without an MCP server. Use for pairing or connecting a device, checking status, taking screenshots, reading the UI hierarchy, tapping, swiping, typing, pressing keys, launching apps, or opening web URLs. Do not use for bypassing device security, anti-detection, account farming, or devices the user does not own or administer.
+description: Inspect and operate an authorized Android phone or emulator through ADB, directly or through Streamable HTTP MCP. Use for checking status, taking screenshots, reading the UI hierarchy, tapping, swiping, typing, pressing keys, launching apps, or opening web URLs. Do not use for bypassing device security, anti-detection, account farming, or devices the user does not own or administer.
 ---
 
 # Android Device Control
@@ -61,9 +61,6 @@ Action-specific schema:
 | `back` | none | none |
 | `launch-app` | `--name PACKAGE_OR_FRAGMENT` | none |
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
-| `pair` | `--endpoint HOST:PORT --code SIX_DIGITS` | none |
-| `connect` | `--endpoint HOST:PORT` | none |
-| `disconnect` | `--endpoint HOST:PORT` | none |
 
 Coordinates and durations must be non-negative integers. Unknown or irrelevant action arguments are rejected.
 
@@ -77,19 +74,17 @@ python3 scripts/android_control.py --action tap --x 540 --y 260
 python3 scripts/android_control.py --action swipe --x1 540 --y1 1800 --x2 540 --y2 500 --duration 300
 python3 scripts/android_control.py --action type-text --text "hello world"
 python3 scripts/android_control.py --action launch-app --name com.android.settings
-python3 scripts/android_control.py --action pair --endpoint 127.0.0.1:37001 --code 123456
-python3 scripts/android_control.py --action connect --endpoint 127.0.0.1:5555
 python3 scripts/android_control.py --action status --target 127.0.0.1:5555
 python3 scripts/android_control.py --mcp
 ```
 
 The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` returns labels, bounds, centers, classes, packages, and clickability. Prefer visible text or content descriptions over unlabeled clickable nodes.
 
-## ADB and wireless debugging
+## ADB discovery
 
-ADB discovery checks `ADB_PATH`, `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, common SDK locations, and `~/android-sdk/platform-tools/adb`.
+ADB discovery checks `ADB_PATH`, `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, common SDK locations, and `~/android-sdk/platform-tools/adb`. Pair or connect wireless devices with `adb` before invoking this skill.
 
-Wireless debugging normally exposes separate ports: `pair` uses the temporary pairing port and code, while `connect` uses the device connection port shown by Android. Do not assume those ports are the same.
+If the requested Android operation is not covered by an action in `scripts/android_control.py`, invoke `adb` directly. Resolve the intended target first, pass it with `adb -s TARGET`, use argument arrays rather than interpolated shell commands, and preserve the same authorization and confirmation boundaries described above.
 
 ## Limitations
 

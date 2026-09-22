@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 ACTIONS = (
     "list-targets", "status", "screenshot", "describe-screen", "tap", "swipe",
     "long-press", "type-text", "press-key", "home", "back", "launch-app",
-    "open-url", "pair", "connect", "disconnect",
+    "open-url",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "status": set(), "screenshot": {"output"},
@@ -32,11 +32,8 @@ ACTION_FIELDS = {
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
     "press-key": {"key"}, "home": set(), "back": set(),
     "launch-app": {"name"}, "open-url": {"url"},
-    "pair": {"endpoint", "code"}, "connect": {"endpoint"},
-    "disconnect": {"endpoint"},
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
-ENDPOINT_RE = re.compile(r"^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\]):([0-9]{1,5})$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
 BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 KEY_MAP = {"home": 3, "back": 4, "enter": 66, "recents": 187}
@@ -89,16 +86,16 @@ def scrub_error(stderr: bytes, code: int | None) -> str:
     return f"adb command failed: {first}"
 
 
-def run_process(argv: list[str], timeout: float, stdin: bytes | None = None) -> bytes:
+def run_process(argv: list[str], timeout: float) -> bytes:
     process = subprocess.Popen(
         argv,
-        stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(input=stdin, timeout=timeout)
+        stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -118,24 +115,18 @@ class Adb:
 
     def run(
         self, args: list[str], *, serial: str | None = None,
-        timeout: float | None = None, stdin: bytes | None = None,
+        timeout: float | None = None,
     ) -> bytes:
         argv = [self.executable]
         if serial:
             validate_serial(serial)
             argv += ["-s", serial]
-        return run_process(argv + args, timeout or self.timeout, stdin)
+        return run_process(argv + args, timeout or self.timeout)
 
 
 def validate_serial(serial: str) -> None:
     if not SERIAL_RE.fullmatch(serial):
         raise ControlError("invalid device serial")
-
-
-def validate_endpoint(endpoint: str) -> None:
-    match = ENDPOINT_RE.fullmatch(endpoint)
-    if not match or not 1 <= int(match.group(1)) <= 65535:
-        raise ControlError("endpoint must be HOST:PORT with a valid port")
 
 
 def parse_devices(output: str) -> list[dict[str, str]]:
@@ -282,13 +273,10 @@ def validate_action_args(args: argparse.Namespace) -> None:
         "press-key": ("key",),
         "launch-app": ("name",),
         "open-url": ("url",),
-        "pair": ("endpoint", "code"),
-        "connect": ("endpoint",),
-        "disconnect": ("endpoint",),
     }.get(args.action, ())
     for field in required:
         require(getattr(args, field), "--" + field.replace("_", "-"))
-    optional_fields = {"output", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url", "endpoint", "code"}
+    optional_fields = {"output", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
     extras = [field for field in optional_fields - ACTION_FIELDS[args.action] if getattr(args, field) is not None]
     if extras:
         flags = ", ".join("--" + field.replace("_", "-") for field in sorted(extras))
@@ -381,8 +369,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--key", choices=sorted(KEY_MAP))
     parser.add_argument("--name")
     parser.add_argument("--url")
-    parser.add_argument("--endpoint")
-    parser.add_argument("--code")
     return parser
 
 
@@ -403,17 +389,6 @@ def execute(args: argparse.Namespace) -> object:
     adb = Adb(resolve_adb(args.adb), args.timeout)
     if args.action == "list-targets":
         return list_targets(adb)
-    if args.action in {"pair", "connect", "disconnect"}:
-        validate_endpoint(args.endpoint)
-        if args.action == "pair":
-            if not re.fullmatch(r"\d{6}", args.code):
-                raise ControlError("--code must contain exactly six digits")
-            response = adb.run(["pair", args.endpoint], stdin=(args.code + "\n").encode()).decode("utf-8", "replace")
-            if "successfully paired" not in response.lower():
-                raise ControlError("pairing did not succeed")
-            return {"endpoint": args.endpoint, "paired": True}
-        response = adb.run([args.action, args.endpoint]).decode("utf-8", "replace").strip()
-        return {"endpoint": args.endpoint, "result": response}
     return device_action(args, adb)
 
 
@@ -448,7 +423,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     )
 
     def record(action: str, values: dict[str, object], ok: bool, error: str | None = None) -> None:
-        safe_values = {key: ("******" if key == "code" else value) for key, value in values.items() if value is not None}
+        safe_values = {key: value for key, value in values.items() if value is not None}
         entry: dict[str, object] = {
             "time": datetime.now(timezone.utc).isoformat(),
             "action": action,
@@ -554,21 +529,6 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def open_url_tool(url: str, target: str | None = None) -> dict:
         """Open an absolute HTTP or HTTPS URL on the device."""
         return call("open-url", url=url, target=target)  # type: ignore[return-value]
-
-    @server.tool(name="pair")
-    def pair_tool(endpoint: str, code: str) -> dict:
-        """Pair ADB wireless debugging using its temporary endpoint and code."""
-        return call("pair", endpoint=endpoint, code=code)  # type: ignore[return-value]
-
-    @server.tool(name="connect")
-    def connect_tool(endpoint: str) -> dict:
-        """Connect ADB to a wireless-debugging device endpoint."""
-        return call("connect", endpoint=endpoint)  # type: ignore[return-value]
-
-    @server.tool(name="disconnect")
-    def disconnect_tool(endpoint: str) -> dict:
-        """Disconnect an ADB wireless-debugging device endpoint."""
-        return call("disconnect", endpoint=endpoint)  # type: ignore[return-value]
 
     @server.custom_route("/", methods=["GET"])
     async def dashboard(_request: Request) -> Response:

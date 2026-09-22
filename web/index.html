@@ -132,7 +132,7 @@ createApp({
   methods: {
     async api(action, values = {}) {
       const payload = { action, ...values };
-      if (this.target && !['list-targets', 'pair', 'connect', 'disconnect'].includes(action)) payload.target = this.target;
+      if (this.target && action !== 'list-targets') payload.target = this.target;
       const response = await fetch('/api/command', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
       });
@@ -217,7 +217,6 @@ createApp({
         else if (action === 'press-key') values = {key: words[0]};
         else if (action === 'launch-app') values = {name: words[0]};
         else if (action === 'open-url') values = {url: words[0]};
-        else if (['connect', 'disconnect'].includes(action)) values = {endpoint: words[0]};
         else if (!['home', 'back', 'status', 'describe-screen', 'list-targets'].includes(action)) throw new Error('Unknown command');
         await this.run(action, values);
         if (!this.error) this.command = '';

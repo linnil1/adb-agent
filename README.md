@@ -24,7 +24,7 @@ The same server provides a build-free Vue dashboard at `http://127.0.0.1:8000/`.
 
 ## Attribution
 
-This project is inspired by [benasbarciauskas/androir-mcp](https://github.com/benasbarciauskas/androir-mcp), an Apache-2.0-licensed TypeScript MCP server. This implementation replaces MCP with a local Python CLI and adds named-argument device pairing and connection actions.
+This project is inspired by [benasbarciauskas/androir-mcp](https://github.com/benasbarciauskas/androir-mcp), an Apache-2.0-licensed TypeScript MCP server. This implementation provides a local Python CLI, Streamable HTTP MCP server, and build-free dashboard.
 
 ## Test
 
