@@ -5,6 +5,7 @@ A Codex skill and dependency-free Python CLI for inspecting and controlling an a
 ```bash
 python3 scripts/android_control.py --action status
 python3 scripts/android_control.py --action tap --x 540 --y 260
+python3 scripts/android_control.py --action set-default-target --target TARGET
 ```
 
 See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safety boundaries.
@@ -21,6 +22,8 @@ python3 scripts/android_control.py --mcp
 The endpoint is `http://127.0.0.1:8000/mcp` by default. Override the listener with `--host` and `--port`. This project supports Streamable HTTP only, not the superseded SSE transport.
 
 The same server provides a build-free Vue dashboard at `http://127.0.0.1:8000/`. It shows the current screenshot, accepts commands with an in-memory history, and lets you tap or swipe directly on the screenshot with visual feedback. Vue loads from a CDN; Node.js is not required.
+
+When exactly one target is ready, it is selected automatically. With multiple ready targets, either pass `--target` for that call or use `set-default-target` to remember a validated target for one hour. The dashboard exposes the same behavior through its target selector and **Set default** button. Ordinary `--target` use never changes the remembered default.
 
 ## Attribution
 

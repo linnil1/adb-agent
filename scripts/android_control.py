@@ -21,12 +21,12 @@ from urllib.parse import urlsplit
 
 
 ACTIONS = (
-    "list-targets", "status", "screenshot", "describe-screen", "tap", "swipe",
+    "list-targets", "set-default-target", "status", "screenshot", "describe-screen", "tap", "swipe",
     "long-press", "type-text", "press-key", "home", "back", "launch-app",
     "open-url",
 )
 ACTION_FIELDS = {
-    "list-targets": set(), "status": set(), "screenshot": {"output"},
+    "list-targets": set(), "set-default-target": set(), "status": set(), "screenshot": {"output"},
     "describe-screen": set(), "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
@@ -39,10 +39,16 @@ BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 KEY_MAP = {"home": 3, "back": 4, "enter": 66, "recents": 187}
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 DEFAULT_TIMEOUT = 30.0
+DEFAULT_TARGET_TTL = 60 * 60
+STATE_FILE_ENV = "ANDROID_CONTROL_STATE_FILE"
 _package_cache: dict[str, tuple[float, list[str]]] = {}
 
 
 class ControlError(RuntimeError):
+    pass
+
+
+class AmbiguousTargetError(ControlError):
     pass
 
 
@@ -148,6 +154,42 @@ def list_targets(adb: Adb) -> list[dict[str, str]]:
     return parse_devices(adb.run(["devices", "-l"]).decode("utf-8", "replace"))
 
 
+def state_file() -> Path:
+    override = os.environ.get(STATE_FILE_ENV)
+    if override:
+        return Path(override).expanduser()
+    state_root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    return state_root / "android-device-control" / "default-target.json"
+
+
+def read_default_target(now: float | None = None) -> str | None:
+    try:
+        value = json.loads(state_file().read_text(encoding="utf-8"))
+        target = value["target"]
+        selected_at = float(value["selected_at"])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+    current = time.time() if now is None else now
+    if not isinstance(target, str) or not SERIAL_RE.fullmatch(target):
+        return None
+    if selected_at > current or current - selected_at >= DEFAULT_TARGET_TTL:
+        return None
+    return target
+
+
+def write_default_target(target: str, now: float | None = None) -> None:
+    validate_serial(target)
+    path = state_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps({"target": target, "selected_at": time.time() if now is None else now}) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
 def resolve_serial(adb: Adb, supplied: str | None) -> str:
     serial = supplied or os.environ.get("ANDROID_SERIAL")
     if serial:
@@ -157,9 +199,28 @@ def resolve_serial(adb: Adb, supplied: str | None) -> str:
     if not ready:
         raise ControlError("no ready Android device connected")
     if len(ready) > 1:
+        remembered = read_default_target()
+        if remembered and any(item["serial"] == remembered for item in ready):
+            return remembered
         names = ", ".join(item["serial"] for item in ready)
-        raise ControlError(f"multiple devices connected ({names}); specify --target")
+        raise AmbiguousTargetError(
+            f"multiple ready targets ({names}); specify --target or use set-default-target"
+        )
     return ready[0]["serial"]
+
+
+def set_default_target(adb: Adb, target: str) -> dict[str, object]:
+    validate_serial(target)
+    ready = {item["serial"] for item in list_targets(adb) if item["state"] == "device"}
+    if target not in ready:
+        raise ControlError(f"target is not connected and ready: {target}")
+    write_default_target(target)
+    return {
+        "target": target,
+        "default_until": datetime.fromtimestamp(
+            time.time() + DEFAULT_TARGET_TTL, timezone.utc
+        ).isoformat(),
+    }
 
 
 def shell_quote(value: str) -> str:
@@ -274,6 +335,8 @@ def validate_action_args(args: argparse.Namespace) -> None:
         "launch-app": ("name",),
         "open-url": ("url",),
     }.get(args.action, ())
+    if args.action == "set-default-target":
+        require(args.target, "--target")
     for field in required:
         require(getattr(args, field), "--" + field.replace("_", "-"))
     optional_fields = {"output", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
@@ -284,6 +347,8 @@ def validate_action_args(args: argparse.Namespace) -> None:
 
 
 def device_action(args: argparse.Namespace, adb: Adb) -> object:
+    if args.action == "set-default-target":
+        return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
     action = args.action
     if action == "status":
@@ -352,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--action", choices=ACTIONS)
     mode.add_argument("--mcp", action="store_true", help="serve the tools over Streamable HTTP")
-    parser.add_argument("--target", help="ADB device serial; defaults to the only ready target")
+    parser.add_argument("--target", help="ADB target for this call; required by set-default-target")
     parser.add_argument("--adb")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--host", help="MCP bind host (default: 127.0.0.1)")
@@ -455,6 +520,11 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def list_targets_tool() -> list[dict[str, str]]:
         """List Android devices visible to ADB."""
         return call("list-targets")  # type: ignore[return-value]
+
+    @server.tool(name="set_default_target")
+    def set_default_target_tool(target: str) -> dict:
+        """Remember a connected, ready target as the automatic choice for one hour."""
+        return call("set-default-target", target=target)  # type: ignore[return-value]
 
     @server.tool(name="status")
     def status_tool(target: str | None = None) -> dict:
@@ -593,6 +663,9 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except AmbiguousTargetError as error:
+        print(f"warning: {error}", file=sys.stderr)
+        raise SystemExit(1) from None
     except ControlError as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1) from None

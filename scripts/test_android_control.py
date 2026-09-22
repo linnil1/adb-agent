@@ -3,9 +3,14 @@
 
 import importlib.util
 import io
+import json
+import os
+import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name("android_control.py")
@@ -16,6 +21,29 @@ SPEC.loader.exec_module(android)
 
 
 class AndroidControlTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.state_path = Path(self.temporary_directory.name) / "state.json"
+        self.state_override = patch.dict(
+            os.environ, {android.STATE_FILE_ENV: str(self.state_path)}, clear=False
+        )
+        self.state_override.start()
+
+    def tearDown(self):
+        self.state_override.stop()
+        self.temporary_directory.cleanup()
+
+    @staticmethod
+    def fake_adb(*targets):
+        class FakeAdb:
+            def run(self, args, **_kwargs):
+                if args != ["devices", "-l"]:
+                    raise AssertionError(args)
+                lines = ["List of devices attached"]
+                lines.extend(f"{target} {state}" for target, state in targets)
+                return ("\n".join(lines) + "\n").encode()
+        return FakeAdb()
+
     def test_shell_quote(self):
         self.assertEqual(android.shell_quote("it's"), "'it'\\''s'")
         self.assertEqual(android.shell_quote("a&b"), "'a&b'")
@@ -63,6 +91,45 @@ class AndroidControlTests(unittest.TestCase):
         self.assertTrue(args.mcp)
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             android.build_parser().parse_args(["--mcp", "--action", "status"])
+
+    def test_set_default_target_requires_explicit_ready_target(self):
+        args = android.build_parser().parse_args(["--action", "set-default-target"])
+        with self.assertRaisesRegex(android.ControlError, "--target is required"):
+            android.validate_action_args(args)
+
+        adb = self.fake_adb(("device-1", "device"), ("device-2", "offline"))
+        result = android.set_default_target(adb, "device-1")
+        self.assertEqual(result["target"], "device-1")
+        self.assertEqual(android.read_default_target(), "device-1")
+        with self.assertRaisesRegex(android.ControlError, "not connected and ready"):
+            android.set_default_target(adb, "device-2")
+
+    def test_one_ready_target_is_automatic_without_default(self):
+        adb = self.fake_adb(("device-1", "device"), ("device-2", "offline"))
+        self.assertEqual(android.resolve_serial(adb, None), "device-1")
+        self.assertFalse(self.state_path.exists())
+
+    def test_fresh_ready_default_resolves_multiple_targets(self):
+        adb = self.fake_adb(("device-1", "device"), ("device-2", "device"))
+        android.write_default_target("device-2", now=time.time() - 3599)
+        self.assertEqual(android.resolve_serial(adb, None), "device-2")
+
+    def test_stale_or_disconnected_default_does_not_resolve_ambiguity(self):
+        adb = self.fake_adb(("device-1", "device"), ("device-2", "device"))
+        self.state_path.write_text(json.dumps({
+            "target": "device-2", "selected_at": time.time() - 3600,
+        }))
+        with self.assertRaisesRegex(android.AmbiguousTargetError, "multiple ready targets"):
+            android.resolve_serial(adb, None)
+
+        android.write_default_target("device-3")
+        with self.assertRaisesRegex(android.ControlError, "specify --target"):
+            android.resolve_serial(adb, None)
+
+    def test_explicit_target_is_call_scoped_and_does_not_persist(self):
+        adb = self.fake_adb(("device-1", "device"), ("device-2", "device"))
+        self.assertEqual(android.resolve_serial(adb, "device-2"), "device-2")
+        self.assertFalse(self.state_path.exists())
 
 
 if __name__ == "__main__":

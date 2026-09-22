@@ -63,6 +63,7 @@
         {{ item.model || item.serial }} · {{ item.state }}
       </option>
     </select>
+    <button @click="setDefaultTarget" :disabled="busy || !target">Set default</button>
     <button @click="refreshScreenshot" :disabled="busy">Refresh</button>
   </header>
 
@@ -94,7 +95,7 @@
           <input v-model="command" placeholder="home · tap 540 260 · type-text hello">
           <button :disabled="busy">Run</button>
         </form>
-        <div class="hint">Commands: tap, swipe, long-press, type-text, press-key, home, back, status, launch-app, open-url.</div>
+        <div class="hint">Commands: tap, swipe, long-press, type-text, press-key, home, back, status, launch-app, open-url, set-default-target.</div>
         <div class="status" :class="{error: error}">{{ error || status }}</div>
       </section>
 
@@ -146,6 +147,10 @@ createApp({
         const ready = this.targets.filter(item => item.state === 'device');
         if (!this.target && ready.length === 1) this.target = ready[0].serial;
       } catch (error) { this.error = error.message; }
+    },
+    async setDefaultTarget() {
+      if (!this.target) return;
+      await this.run('set-default-target');
     },
     async refreshScreenshot() {
       this.screenReady = false;
@@ -217,6 +222,9 @@ createApp({
         else if (action === 'press-key') values = {key: words[0]};
         else if (action === 'launch-app') values = {name: words[0]};
         else if (action === 'open-url') values = {url: words[0]};
+        else if (action === 'set-default-target') {
+          if (!this.target) throw new Error('Select a target first');
+        }
         else if (!['home', 'back', 'status', 'describe-screen', 'list-targets'].includes(action)) throw new Error('Unknown command');
         await this.run(action, values);
         if (!this.error) this.command = '';

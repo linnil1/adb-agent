@@ -10,7 +10,7 @@ Use `scripts/android_control.py` as the automation tool. It is a dependency-free
 ## Workflow
 
 1. Run `python3 scripts/android_control.py --action list-targets`.
-2. If one ready device exists, omit `--target`. If several exist, pass `--target TARGET`.
+2. If one ready device exists, omit `--target`. If several exist, pass `--target TARGET` for one call, or explicitly remember one for an hour with `--action set-default-target --target TARGET`.
 3. Read state with `status`, `describe-screen`, or `screenshot` before coordinate actions.
 4. Use the `center` coordinates returned by `describe-screen` directly with `tap`, `swipe`, or `long-press`.
 5. Inspect the screen again after navigation or another state-changing action.
@@ -30,7 +30,7 @@ Common arguments:
 | Argument | Type | Required | Meaning |
 |---|---|---:|---|
 | `--action` | enum | yes | One of the actions below |
-| `--target` | string | no | ADB target serial; required only when multiple devices are ready |
+| `--target` | string | no | ADB target for this call; required by `set-default-target` |
 | `--adb` | path | no | Explicit adb executable |
 | `--timeout` | positive number | no | Timeout in seconds; default `30` |
 
@@ -44,11 +44,14 @@ MCP mode defaults to `127.0.0.1:8000` with endpoint `/mcp` and requires the pack
 
 The same listener serves a lightweight Vue dashboard at `/`. It requires no Node.js build step and provides live screenshots, a command box with in-memory history, and direct tap/swipe gestures over the screenshot.
 
+Target selection is shared by CLI, MCP, and dashboard calls. One ready target is selected silently. With multiple ready targets, a remembered target set less than one hour ago is used if it is still ready; otherwise the operation warns and refuses to guess. Passing `--target` to an ordinary action affects only that call and does not update the remembered target. `set-default-target` validates that its target is currently ready, then replaces the prior default. State is kept in the user's local state directory; `ANDROID_CONTROL_STATE_FILE` may override the state-file path for isolated environments.
+
 Action-specific schema:
 
 | Action | Required arguments | Optional arguments |
 |---|---|---|
 | `list-targets` | none | none |
+| `set-default-target` | `--target TARGET` | none |
 | `status` | none | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`) |
 | `describe-screen` | none | none |
@@ -68,6 +71,7 @@ Coordinates and durations must be non-negative integers. Unknown or irrelevant a
 
 ```bash
 python3 scripts/android_control.py --action status
+python3 scripts/android_control.py --action set-default-target --target 127.0.0.1:5555
 python3 scripts/android_control.py --action screenshot --output /tmp/android-screen.png
 python3 scripts/android_control.py --action describe-screen
 python3 scripts/android_control.py --action tap --x 540 --y 260
@@ -92,4 +96,4 @@ If the requested Android operation is not covered by an action in `scripts/andro
 - `uiautomator` can omit WebView, canvas, video, and accessibility-hidden content; inspect a screenshot when the hierarchy is incomplete.
 - Friendly app names match package names, not localized launcher labels. Pass the exact package if matching is ambiguous.
 
-The implementation is inspired by the Apache-2.0-licensed `benasbarciauskas/androir-mcp` project, with MCP and TypeScript replaced by a local Python CLI.
+The implementation is inspired by the Apache-2.0-licensed `benasbarciauskas/androir-mcp` project and reimplements its core workflow as a local Python CLI with optional Streamable HTTP MCP.
