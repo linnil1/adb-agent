@@ -1,0 +1,4 @@
+interface:
+  display_name: "Android Device Control"
+  short_description: "Inspect and control Android devices with ADB"
+  default_prompt: "Use $android-device-control to inspect or control my connected Android device."

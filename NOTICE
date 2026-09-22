@@ -1,0 +1,8 @@
+Android Device Control Skill
+
+This project is inspired by androir-mcp:
+https://github.com/benasbarciauskas/androir-mcp
+
+androir-mcp is licensed under the Apache License, Version 2.0. This project
+replaces the MCP and TypeScript layers with a local Python CLI and adds named
+arguments for wireless-debugging setup.
