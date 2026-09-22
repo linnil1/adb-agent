@@ -2,7 +2,9 @@
 """Offline unit tests for android_control.py."""
 
 import importlib.util
+import io
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 
@@ -55,6 +57,12 @@ class AndroidControlTests(unittest.TestCase):
         bad = android.build_parser().parse_args(["--action", "status", "--x", "1"])
         with self.assertRaises(android.ControlError):
             android.validate_action_args(bad)
+
+    def test_mcp_is_an_alternative_mode(self):
+        args = android.build_parser().parse_args(["--mcp", "--port", "9000"])
+        self.assertTrue(args.mcp)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            android.build_parser().parse_args(["--mcp", "--action", "status"])
 
 
 if __name__ == "__main__":

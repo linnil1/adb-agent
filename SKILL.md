@@ -34,6 +34,14 @@ Common arguments:
 | `--adb` | path | no | Explicit adb executable |
 | `--timeout` | positive number | no | Timeout in seconds; default `30` |
 
+To serve the same actions as MCP tools over Streamable HTTP, use `--mcp` instead of `--action`:
+
+```bash
+python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
+```
+
+MCP mode defaults to `127.0.0.1:8000` with endpoint `/mcp` and requires the packages in `requirements-mcp.txt`. It intentionally does not support the superseded SSE transport.
+
 Action-specific schema:
 
 | Action | Required arguments | Optional arguments |
@@ -67,9 +75,10 @@ python3 scripts/android_control.py --action tap --x 540 --y 260
 python3 scripts/android_control.py --action swipe --x1 540 --y1 1800 --x2 540 --y2 500 --duration 300
 python3 scripts/android_control.py --action type-text --text "hello world"
 python3 scripts/android_control.py --action launch-app --name com.android.settings
-python3 scripts/android_control.py --action pair --endpoint 127.0.0.1:39861 --code 294447
-python3 scripts/android_control.py --action connect --endpoint 127.0.0.1:39863
-python3 scripts/android_control.py --action status --serial 127.0.0.1:39863
+python3 scripts/android_control.py --action pair --endpoint 127.0.0.1:37001 --code 123456
+python3 scripts/android_control.py --action connect --endpoint 127.0.0.1:5555
+python3 scripts/android_control.py --action status --serial 127.0.0.1:5555
+python3 scripts/android_control.py --mcp
 ```
 
 The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` returns labels, bounds, centers, classes, packages, and clickability. Prefer visible text or content descriptions over unlabeled clickable nodes.
