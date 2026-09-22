@@ -20,6 +20,8 @@ python3 scripts/android_control.py --mcp
 
 The endpoint is `http://127.0.0.1:8000/mcp` by default. Override the listener with `--host` and `--port`. This project supports Streamable HTTP only, not the superseded SSE transport.
 
+The same server provides a build-free Vue dashboard at `http://127.0.0.1:8000/`. It shows the current screenshot, accepts commands with an in-memory history, and lets you tap or swipe directly on the screenshot with visual feedback. Vue loads from a CDN; Node.js is not required.
+
 ## Attribution
 
 This project is inspired by [benasbarciauskas/androir-mcp](https://github.com/benasbarciauskas/androir-mcp), an Apache-2.0-licensed TypeScript MCP server. This implementation replaces MCP with a local Python CLI and adds named-argument device pairing and connection actions.

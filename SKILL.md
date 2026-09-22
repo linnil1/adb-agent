@@ -42,6 +42,8 @@ python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
 
 MCP mode defaults to `127.0.0.1:8000` with endpoint `/mcp` and requires the packages in `requirements-mcp.txt`. It intentionally does not support the superseded SSE transport.
 
+The same listener serves a lightweight Vue dashboard at `/`. It requires no Node.js build step and provides live screenshots, a command box with in-memory history, and direct tap/swipe gestures over the screenshot.
+
 Action-specific schema:
 
 | Action | Required arguments | Optional arguments |

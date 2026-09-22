@@ -13,6 +13,8 @@ import signal
 import subprocess
 import sys
 import time
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -430,22 +432,49 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         from mcp.server import MCPServer
         from mcp.server.mcpserver import Image
         from mcp.server.mcpserver.exceptions import ToolError
+        from starlette.requests import Request
+        from starlette.responses import FileResponse, JSONResponse, Response
     except ImportError:
         raise ControlError(
             "MCP support requires the 'mcp' package; install requirements-mcp.txt"
         ) from None
 
     resolved_adb = resolve_adb(adb_path)
+    web_root = Path(__file__).resolve().parent.parent / "web"
+    history: deque[dict[str, object]] = deque(maxlen=100)
     server = MCPServer(
         "android-device-control",
         instructions="Inspect and control an authorized Android device over ADB.",
     )
 
+    def record(action: str, values: dict[str, object], ok: bool, error: str | None = None) -> None:
+        safe_values = {key: ("******" if key == "code" else value) for key, value in values.items() if value is not None}
+        entry: dict[str, object] = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "arguments": safe_values,
+            "ok": ok,
+        }
+        if error:
+            entry["error"] = error
+        history.appendleft(entry)
+
     def call(action: str, **values: object) -> object:
         try:
-            return execute(action_args(action, adb_path=resolved_adb, timeout=timeout, **values))
+            result = execute(action_args(action, adb_path=resolved_adb, timeout=timeout, **values))
+            record(action, values, True)
+            return result
         except ControlError as error:
+            record(action, values, False, str(error))
             raise ToolError(str(error)) from None
+
+    def capture_png(serial: str | None = None) -> bytes:
+        adb = Adb(resolved_adb, timeout)
+        selected = resolve_serial(adb, serial)
+        png = adb.run(["exec-out", "screencap", "-p"], serial=selected, timeout=60)
+        if not png.startswith(PNG_MAGIC):
+            raise ControlError("screenshot response is not a valid PNG")
+        return png
 
     @server.tool(name="list_targets")
     def list_targets_tool() -> list[dict[str, str]]:
@@ -461,13 +490,11 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def screenshot_tool(serial: str | None = None):
         """Capture the current device screen as a PNG image."""
         try:
-            adb = Adb(resolved_adb, timeout)
-            selected = resolve_serial(adb, serial)
-            png = adb.run(["exec-out", "screencap", "-p"], serial=selected, timeout=60)
-            if not png.startswith(PNG_MAGIC):
-                raise ControlError("screenshot response is not a valid PNG")
+            png = capture_png(serial)
+            record("screenshot", {"serial": serial}, True)
             return Image(data=png, format="png")
         except ControlError as error:
+            record("screenshot", {"serial": serial}, False, str(error))
             raise ToolError(str(error)) from None
 
     @server.tool(name="describe_screen")
@@ -542,6 +569,42 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def disconnect_tool(endpoint: str) -> dict:
         """Disconnect an ADB wireless-debugging device endpoint."""
         return call("disconnect", endpoint=endpoint)  # type: ignore[return-value]
+
+    @server.custom_route("/", methods=["GET"])
+    async def dashboard(_request: Request) -> Response:
+        return FileResponse(web_root / "index.html", media_type="text/html")
+
+    @server.custom_route("/api/screenshot", methods=["GET"])
+    async def dashboard_screenshot(request: Request) -> Response:
+        serial = request.query_params.get("serial") or None
+        try:
+            return Response(
+                capture_png(serial),
+                media_type="image/png",
+                headers={"Cache-Control": "no-store"},
+            )
+        except ControlError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+
+    @server.custom_route("/api/history", methods=["GET"])
+    async def dashboard_history(_request: Request) -> Response:
+        return JSONResponse({"history": list(history)})
+
+    @server.custom_route("/api/command", methods=["POST"])
+    async def dashboard_command(request: Request) -> Response:
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
+        if not isinstance(payload, dict) or payload.get("action") not in ACTIONS:
+            return JSONResponse({"ok": False, "error": "invalid action"}, status_code=400)
+        action = str(payload["action"])
+        allowed = ACTION_FIELDS[action] | {"serial"}
+        values = {key: payload[key] for key in allowed if key in payload}
+        try:
+            return JSONResponse({"ok": True, "result": call(action, **values)})
+        except ToolError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
 
     server.run(transport="streamable-http", host=host, port=port)
 
