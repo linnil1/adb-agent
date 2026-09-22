@@ -3,11 +3,11 @@
 A Codex skill and dependency-free Python CLI for inspecting and controlling an authorized Android phone or emulator over ADB. It replaces an MCP server with an ordinary named-argument command:
 
 ```bash
-python3 android-device-control/scripts/android_control.py --action status
-python3 android-device-control/scripts/android_control.py --action tap --x 540 --y 260
+python3 scripts/android_control.py --action status
+python3 scripts/android_control.py --action tap --x 540 --y 260
 ```
 
-See [`android-device-control/SKILL.md`](android-device-control/SKILL.md) for the complete argument schema, workflow, and safety boundaries.
+See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safety boundaries.
 
 ## Attribution
 
@@ -16,6 +16,6 @@ This project is inspired by [benasbarciauskas/androir-mcp](https://github.com/be
 ## Test
 
 ```bash
-python3 -m unittest android-device-control/scripts/test_android_control.py
-python3 android-device-control/scripts/android_control.py --action list-targets
+python3 -m unittest scripts/test_android_control.py
+python3 scripts/android_control.py --action list-targets
 ```
