@@ -52,11 +52,16 @@ class AndroidControlTests(unittest.TestCase):
             android.validate_endpoint("localhost;rm:5555")
 
     def test_named_argument_schema(self):
-        args = android.build_parser().parse_args(["--action", "tap", "--x", "1", "--y", "2"])
+        args = android.build_parser().parse_args([
+            "--action", "tap", "--target", "device-1", "--x", "1", "--y", "2"
+        ])
+        self.assertEqual(args.target, "device-1")
         android.validate_action_args(args)
         bad = android.build_parser().parse_args(["--action", "status", "--x", "1"])
         with self.assertRaises(android.ControlError):
             android.validate_action_args(bad)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            android.build_parser().parse_args(["--action", "status", "--serial", "device-1"])
 
     def test_mcp_is_an_alternative_mode(self):
         args = android.build_parser().parse_args(["--mcp", "--port", "9000"])

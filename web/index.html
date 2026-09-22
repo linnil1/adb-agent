@@ -132,7 +132,7 @@ createApp({
   methods: {
     async api(action, values = {}) {
       const payload = { action, ...values };
-      if (this.target && !['list-targets', 'pair', 'connect', 'disconnect'].includes(action)) payload.serial = this.target;
+      if (this.target && !['list-targets', 'pair', 'connect', 'disconnect'].includes(action)) payload.target = this.target;
       const response = await fetch('/api/command', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
       });
@@ -150,7 +150,7 @@ createApp({
     async refreshScreenshot() {
       this.screenReady = false;
       const query = new URLSearchParams({ _: Date.now().toString() });
-      if (this.target) query.set('serial', this.target);
+      if (this.target) query.set('target', this.target);
       this.screenUrl = `/api/screenshot?${query}`;
     },
     screenError() { this.error = 'Unable to load screenshot'; this.screenReady = false; },

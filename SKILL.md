@@ -10,7 +10,7 @@ Use `scripts/android_control.py` as the automation tool. It is a dependency-free
 ## Workflow
 
 1. Run `python3 scripts/android_control.py --action list-targets`.
-2. If one ready device exists, omit `--serial`. If several exist, pass `--serial SERIAL`.
+2. If one ready device exists, omit `--target`. If several exist, pass `--target TARGET`.
 3. Read state with `status`, `describe-screen`, or `screenshot` before coordinate actions.
 4. Use the `center` coordinates returned by `describe-screen` directly with `tap`, `swipe`, or `long-press`.
 5. Inspect the screen again after navigation or another state-changing action.
@@ -22,7 +22,7 @@ Device mutations affect the user's phone. Stay within the requested task. Confir
 Every call has this shape:
 
 ```bash
-python3 scripts/android_control.py --action ACTION [--serial SERIAL] [action arguments]
+python3 scripts/android_control.py --action ACTION [--target TARGET] [action arguments]
 ```
 
 Common arguments:
@@ -30,7 +30,7 @@ Common arguments:
 | Argument | Type | Required | Meaning |
 |---|---|---:|---|
 | `--action` | enum | yes | One of the actions below |
-| `--serial` | string | no | ADB device serial; required only when multiple devices are ready |
+| `--target` | string | no | ADB target serial; required only when multiple devices are ready |
 | `--adb` | path | no | Explicit adb executable |
 | `--timeout` | positive number | no | Timeout in seconds; default `30` |
 
@@ -79,7 +79,7 @@ python3 scripts/android_control.py --action type-text --text "hello world"
 python3 scripts/android_control.py --action launch-app --name com.android.settings
 python3 scripts/android_control.py --action pair --endpoint 127.0.0.1:37001 --code 123456
 python3 scripts/android_control.py --action connect --endpoint 127.0.0.1:5555
-python3 scripts/android_control.py --action status --serial 127.0.0.1:5555
+python3 scripts/android_control.py --action status --target 127.0.0.1:5555
 python3 scripts/android_control.py --mcp
 ```
 

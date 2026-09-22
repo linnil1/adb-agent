@@ -82,7 +82,7 @@ def scrub_error(stderr: bytes, code: int | None) -> str:
     if "no devices" in lower or "device not found" in lower:
         return "device not found"
     if "more than one device" in lower:
-        return "multiple devices connected; specify --serial"
+        return "multiple devices connected; specify --target"
     if "permission denied" in lower:
         return "adb command failed: permission denied"
     first = text.splitlines()[0][:120] if text else f"exit {code}"
@@ -167,7 +167,7 @@ def resolve_serial(adb: Adb, supplied: str | None) -> str:
         raise ControlError("no ready Android device connected")
     if len(ready) > 1:
         names = ", ".join(item["serial"] for item in ready)
-        raise ControlError(f"multiple devices connected ({names}); specify --serial")
+        raise ControlError(f"multiple devices connected ({names}); specify --target")
     return ready[0]["serial"]
 
 
@@ -296,7 +296,7 @@ def validate_action_args(args: argparse.Namespace) -> None:
 
 
 def device_action(args: argparse.Namespace, adb: Adb) -> object:
-    serial = resolve_serial(adb, args.serial)
+    serial = resolve_serial(adb, args.target)
     action = args.action
     if action == "status":
         props = {}
@@ -364,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--action", choices=ACTIONS)
     mode.add_argument("--mcp", action="store_true", help="serve the tools over Streamable HTTP")
-    parser.add_argument("--serial")
+    parser.add_argument("--target", help="ADB device serial; defaults to the only ready target")
     parser.add_argument("--adb")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--host", help="MCP bind host (default: 127.0.0.1)")
@@ -468,9 +468,9 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             record(action, values, False, str(error))
             raise ToolError(str(error)) from None
 
-    def capture_png(serial: str | None = None) -> bytes:
+    def capture_png(target: str | None = None) -> bytes:
         adb = Adb(resolved_adb, timeout)
-        selected = resolve_serial(adb, serial)
+        selected = resolve_serial(adb, target)
         png = adb.run(["exec-out", "screencap", "-p"], serial=selected, timeout=60)
         if not png.startswith(PNG_MAGIC):
             raise ControlError("screenshot response is not a valid PNG")
@@ -482,78 +482,78 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return call("list-targets")  # type: ignore[return-value]
 
     @server.tool(name="status")
-    def status_tool(serial: str | None = None) -> dict:
+    def status_tool(target: str | None = None) -> dict:
         """Return device state, identity, Android version, and battery details."""
-        return call("status", serial=serial)  # type: ignore[return-value]
+        return call("status", target=target)  # type: ignore[return-value]
 
     @server.tool(name="screenshot")
-    def screenshot_tool(serial: str | None = None):
+    def screenshot_tool(target: str | None = None):
         """Capture the current device screen as a PNG image."""
         try:
-            png = capture_png(serial)
-            record("screenshot", {"serial": serial}, True)
+            png = capture_png(target)
+            record("screenshot", {"target": target}, True)
             return Image(data=png, format="png")
         except ControlError as error:
-            record("screenshot", {"serial": serial}, False, str(error))
+            record("screenshot", {"target": target}, False, str(error))
             raise ToolError(str(error)) from None
 
     @server.tool(name="describe_screen")
-    def describe_screen_tool(serial: str | None = None) -> dict:
+    def describe_screen_tool(target: str | None = None) -> dict:
         """Return UI labels, bounds, and center coordinates from uiautomator."""
-        return call("describe-screen", serial=serial)  # type: ignore[return-value]
+        return call("describe-screen", target=target)  # type: ignore[return-value]
 
     @server.tool(name="tap")
-    def tap_tool(x: int, y: int, serial: str | None = None) -> dict:
+    def tap_tool(x: int, y: int, target: str | None = None) -> dict:
         """Tap non-negative device-pixel coordinates."""
-        return call("tap", x=x, y=y, serial=serial)  # type: ignore[return-value]
+        return call("tap", x=x, y=y, target=target)  # type: ignore[return-value]
 
     @server.tool(name="swipe")
     def swipe_tool(
         x1: int, y1: int, x2: int, y2: int,
-        duration: int = 300, serial: str | None = None,
+        duration: int = 300, target: str | None = None,
     ) -> dict:
         """Swipe between device-pixel coordinates."""
-        return call("swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration=duration, serial=serial)  # type: ignore[return-value]
+        return call("swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration=duration, target=target)  # type: ignore[return-value]
 
     @server.tool(name="long_press")
     def long_press_tool(
-        x: int, y: int, duration: int = 1000, serial: str | None = None,
+        x: int, y: int, duration: int = 1000, target: str | None = None,
     ) -> dict:
         """Long-press device-pixel coordinates."""
-        return call("long-press", x=x, y=y, duration=duration, serial=serial)  # type: ignore[return-value]
+        return call("long-press", x=x, y=y, duration=duration, target=target)  # type: ignore[return-value]
 
     @server.tool(name="type_text")
-    def type_text_tool(text: str, serial: str | None = None) -> dict:
+    def type_text_tool(text: str, target: str | None = None) -> dict:
         """Type text into the focused Android input."""
-        return call("type-text", text=text, serial=serial)  # type: ignore[return-value]
+        return call("type-text", text=text, target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_key")
     def press_key_tool(
         key: Literal["home", "back", "enter", "recents"],
-        serial: str | None = None,
+        target: str | None = None,
     ) -> dict:
         """Press home, back, enter, or recents."""
-        return call("press-key", key=key, serial=serial)  # type: ignore[return-value]
+        return call("press-key", key=key, target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_home")
-    def press_home_tool(serial: str | None = None) -> dict:
+    def press_home_tool(target: str | None = None) -> dict:
         """Press the Android home button."""
-        return call("home", serial=serial)  # type: ignore[return-value]
+        return call("home", target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_back")
-    def press_back_tool(serial: str | None = None) -> dict:
+    def press_back_tool(target: str | None = None) -> dict:
         """Press the Android back button."""
-        return call("back", serial=serial)  # type: ignore[return-value]
+        return call("back", target=target)  # type: ignore[return-value]
 
     @server.tool(name="launch_app")
-    def launch_app_tool(name: str, serial: str | None = None) -> dict:
+    def launch_app_tool(name: str, target: str | None = None) -> dict:
         """Launch an installed app by exact package or package-name fragment."""
-        return call("launch-app", name=name, serial=serial)  # type: ignore[return-value]
+        return call("launch-app", name=name, target=target)  # type: ignore[return-value]
 
     @server.tool(name="open_url")
-    def open_url_tool(url: str, serial: str | None = None) -> dict:
+    def open_url_tool(url: str, target: str | None = None) -> dict:
         """Open an absolute HTTP or HTTPS URL on the device."""
-        return call("open-url", url=url, serial=serial)  # type: ignore[return-value]
+        return call("open-url", url=url, target=target)  # type: ignore[return-value]
 
     @server.tool(name="pair")
     def pair_tool(endpoint: str, code: str) -> dict:
@@ -576,10 +576,10 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.custom_route("/api/screenshot", methods=["GET"])
     async def dashboard_screenshot(request: Request) -> Response:
-        serial = request.query_params.get("serial") or None
+        target = request.query_params.get("target") or None
         try:
             return Response(
-                capture_png(serial),
+                capture_png(target),
                 media_type="image/png",
                 headers={"Cache-Control": "no-store"},
             )
@@ -599,7 +599,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         if not isinstance(payload, dict) or payload.get("action") not in ACTIONS:
             return JSONResponse({"ok": False, "error": "invalid action"}, status_code=400)
         action = str(payload["action"])
-        allowed = ACTION_FIELDS[action] | {"serial"}
+        allowed = ACTION_FIELDS[action] | {"target"}
         values = {key: payload[key] for key in allowed if key in payload}
         try:
             return JSONResponse({"ok": True, "result": call(action, **values)})
@@ -613,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.mcp:
         action_fields = set().union(*ACTION_FIELDS.values())
-        if args.serial or any(getattr(args, field) is not None for field in action_fields):
+        if args.target or any(getattr(args, field) is not None for field in action_fields):
             raise ControlError("action arguments cannot be combined with --mcp")
         host = args.host or "127.0.0.1"
         port = args.port or 8000
