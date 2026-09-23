@@ -85,7 +85,7 @@ python3 scripts/android_control.py --action status --target 127.0.0.1:5555
 python3 scripts/android_control.py --mcp
 ```
 
-The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning labels, bounds, centers, classes, packages, and clickability; `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or content descriptions over unlabeled clickable nodes.
+The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning labels, decoded text and content descriptions, bounds, centers, classes, packages, and the `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable` states. Scrollable or selected containers are retained even when they have no label. `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or content descriptions over unlabeled clickable nodes.
 
 ## ADB discovery
 

@@ -261,7 +261,12 @@ def parse_ui_xml(xml: str) -> list[dict[str, object]]:
         description = attribute(tag, "content-desc")
         class_name = attribute(tag, "class")
         clickable = attribute(tag, "clickable") == "true"
-        if not text and not description and not clickable:
+        selected = attribute(tag, "selected") == "true"
+        scrollable = attribute(tag, "scrollable") == "true"
+        enabled = attribute(tag, "enabled") == "true"
+        checked = attribute(tag, "checked") == "true"
+        focusable = attribute(tag, "focusable") == "true"
+        if not text and not description and not clickable and not selected and not scrollable:
             continue
         bounds = BOUNDS_RE.fullmatch(attribute(tag, "bounds"))
         if not bounds:
@@ -274,6 +279,11 @@ def parse_ui_xml(xml: str) -> list[dict[str, object]]:
             "class": class_name,
             "package": attribute(tag, "package"),
             "clickable": clickable,
+            "selected": selected,
+            "scrollable": scrollable,
+            "enabled": enabled,
+            "checked": checked,
+            "focusable": focusable,
             "bounds": [x1, y1, x2, y2],
             "center": [round((x1 + x2) / 2), round((y1 + y2) / 2)],
         })

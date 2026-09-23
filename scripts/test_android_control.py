@@ -67,6 +67,37 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(elements[0]["label"], "A & B > C")
         self.assertEqual(elements[0]["center"], [50, 30])
 
+    def test_parse_ui_xml_preserves_accessibility_state(self):
+        xml = (
+            '<hierarchy>'
+            '<node text="" content-desc="More" class="android.widget.Button" '
+            'clickable="true" selected="false" scrollable="false" enabled="true" '
+            'checked="false" focusable="true" bounds="[0,0][40,40]"/>'
+            '<node text="" content-desc="Transit 2.0&#10;Tab 1 of 2" '
+            'class="android.view.View" clickable="true" selected="true" '
+            'scrollable="false" enabled="true" checked="true" focusable="true" '
+            'bounds="[0,40][100,80]"/>'
+            '<node text="" content-desc="" class="androidx.recyclerview.widget.RecyclerView" '
+            'clickable="false" selected="false" scrollable="true" enabled="true" '
+            'checked="false" focusable="false" bounds="[0,80][100,300]"/>'
+            '</hierarchy>'
+        )
+
+        elements = android.parse_ui_xml(xml)
+
+        self.assertEqual([item["label"] for item in elements], [
+            "More", "Transit 2.0\nTab 1 of 2", "RecyclerView",
+        ])
+        self.assertEqual(elements[1]["content_description"], "Transit 2.0\nTab 1 of 2")
+        self.assertTrue(elements[1]["selected"])
+        self.assertTrue(elements[1]["enabled"])
+        self.assertTrue(elements[1]["checked"])
+        self.assertTrue(elements[1]["focusable"])
+        self.assertTrue(elements[2]["scrollable"])
+        self.assertFalse(elements[2]["clickable"])
+        self.assertFalse(elements[2]["checked"])
+        self.assertFalse(elements[2]["focusable"])
+
     def test_describe_ui_supports_json_and_original_xml(self):
         xml = '<hierarchy><node text="OK" clickable="true" bounds="[0,0][10,20]"/></hierarchy>'
         parsed = android.describe_ui("device-1", xml, "json")

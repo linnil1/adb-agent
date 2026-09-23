@@ -17,6 +17,8 @@ python3 scripts/android_control.py --action describe-screen --format json
 python3 scripts/android_control.py --action describe-screen --format original
 ```
 
+Parsed elements retain decoded accessibility descriptions and the `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable` states. This keeps unlabeled selected tabs and scrollable containers available to automation.
+
 ## Streamable HTTP MCP
 
 Install the official Python MCP SDK and start the same program in MCP mode:
