@@ -42,7 +42,7 @@ python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
 
 MCP mode defaults to `127.0.0.1:8000` with endpoint `/mcp` and requires the packages in `requirements-mcp.txt`. It intentionally does not support the superseded SSE transport.
 
-The same listener serves a lightweight Vue viewer at `/`. It requires no Node.js build step, obtains the registered tools and their JSON input schemas from the MCP server, and invokes the same tool handlers as MCP clients. It also provides in-memory history and animates tap/swipe tool calls from any MCP client over the captured screenshot.
+The same listener serves a lightweight Vue viewer at `/`. It requires no Node.js build step, obtains the registered tools and their JSON input schemas from the MCP server, and invokes the same tool handlers as MCP clients. It provides in-memory history, crossfades new screenshots, highlights new success or failure entries, and animates target-matching tap, swipe, and long-press calls from any MCP client over the captured screenshot.
 
 Loading the viewer never runs an ADB action. Only an explicit `screenshot` tool call from MCP or the dashboard captures a new PNG. The server caches the latest image in memory and pushes a notification to open viewers; their browser event stream is only a dashboard update channel and does not add an MCP SSE transport.
 

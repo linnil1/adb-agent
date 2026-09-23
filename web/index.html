@@ -22,13 +22,17 @@
     .viewer { min-height: 0; display: grid; place-items: center; padding: 18px; overflow: auto; background: radial-gradient(circle at 50% 30%, #172131, #090c11 60%); }
     .phone { position: relative; line-height: 0; max-width: 100%; max-height: calc(100vh - 94px); border: 1px solid #303b4d; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 70px #000a; touch-action: none; user-select: none; }
     .phone img { display: block; max-width: 100%; max-height: calc(100vh - 94px); object-fit: contain; pointer-events: none; }
+    .phone img.screen-enter { animation: screen-in .28s ease-out; }
     .empty { width: min(360px, 80vw); min-height: 540px; padding: 30px; display: grid; place-items: center; text-align: center; line-height: 1.5; color: #8190a5; background: #10151d; }
     .tap-pulse { position: absolute; width: 34px; height: 34px; margin: -17px; border: 3px solid #60a5fa; border-radius: 50%; animation: pulse .7s ease-out forwards; pointer-events: none; }
     .swipe-line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-    .swipe-line line { stroke: #fb7185; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 22 14; animation: dash .65s linear, fade .9s ease-out forwards; }
+    .swipe-line line { stroke: #fb7185; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 22 14; animation-name: dash, fade; animation-timing-function: linear, ease-out; animation-fill-mode: none, forwards; }
+    .long-press-ring { position: absolute; width: 42px; height: 42px; margin: -21px; border: 4px solid #fbbf24; border-radius: 50%; box-shadow: 0 0 0 8px #fbbf2433; animation: hold-ring 1s ease-in-out forwards; pointer-events: none; }
+    @keyframes screen-in { from { opacity: .35; filter: brightness(1.35); } to { opacity: 1; filter: brightness(1); } }
     @keyframes pulse { from { transform: scale(.3); opacity: 1; } to { transform: scale(2.4); opacity: 0; } }
     @keyframes dash { to { stroke-dashoffset: -72; } }
     @keyframes fade { 70% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes hold-ring { 0% { transform: scale(.55); opacity: 0; } 15% { transform: scale(1); opacity: 1; } 80% { transform: scale(1); opacity: 1; } 100% { transform: scale(1.45); opacity: 0; } }
     aside { min-height: 0; border-left: 1px solid #202733; display: grid; grid-template-rows: auto 1fr; background: #0e1219; }
     .panel { padding: 14px; border-bottom: 1px solid #202733; }
     .panel h2, .history h2 { font-size: 12px; color: #91a0b6; text-transform: uppercase; letter-spacing: .08em; }
@@ -44,11 +48,15 @@
     .history { min-height: 0; overflow: auto; padding: 0; }
     .history h2 { position: sticky; top: 0; margin: 0; padding: 14px; background: #0e1219ee; border-bottom: 1px solid #202733; }
     .entry { padding: 11px 14px; border-bottom: 1px solid #1b222d; font-size: 12px; }
+    .entry.fresh { animation: history-ok .42s ease-out; }
+    .entry.fresh.failed { animation-name: history-fail; }
     .entry-head { display: flex; gap: 8px; align-items: center; }
     .entry .action { color: #93c5fd; font-family: ui-monospace, monospace; }
     .entry .time { margin-left: auto; color: #657389; }
     .entry .ok { color: #4ade80; } .entry .fail { color: #fb7185; }
     .entry pre { white-space: pre-wrap; word-break: break-word; color: #9ba9bc; margin: 6px 0 0; font-size: 11px; }
+    @keyframes history-ok { from { background: #22c55e38; transform: translateX(10px); } to { background: transparent; transform: none; } }
+    @keyframes history-fail { from { background: #ef444448; transform: translateX(10px); } to { background: transparent; transform: none; } }
     @media (max-width: 850px) {
       header { flex-wrap: wrap; } header h1 { width: 100%; }
       main { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 70vh) auto; }
@@ -69,12 +77,13 @@
   <main>
     <section class="viewer">
       <div class="phone">
-        <img v-if="screenUrl" ref="screen" :src="screenUrl" @load="screenReady = true" @error="screenError">
+        <img v-if="screenUrl" :key="screenRevision" ref="screen" :src="screenUrl" :class="{'screen-enter': screenAnimated}" @load="screenReady = true" @error="screenError">
         <div v-else class="empty">Waiting for an MCP or dashboard screenshot action.</div>
         <div v-if="effect?.type === 'tap'" :key="effect.id" class="tap-pulse" :style="{left: effect.x + '%', top: effect.y + '%'}"></div>
         <svg v-if="effect?.type === 'swipe'" :key="effect.id" class="swipe-line" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <line :x1="effect.x1" :y1="effect.y1" :x2="effect.x2" :y2="effect.y2"></line>
+          <line :x1="effect.x1" :y1="effect.y1" :x2="effect.x2" :y2="effect.y2" :style="{animationDuration: effect.duration + 'ms, ' + (effect.duration + 250) + 'ms'}"></line>
         </svg>
+        <div v-if="effect?.type === 'long_press'" :key="effect.id" class="long-press-ring" :style="{left: effect.x + '%', top: effect.y + '%', animationDuration: (effect.duration + 250) + 'ms'}"></div>
       </div>
     </section>
 
@@ -103,7 +112,7 @@
       <section class="history">
         <h2>History</h2>
         <div v-if="!history.length" class="entry">No commands yet.</div>
-        <div v-for="(item, index) in history" :key="item.time + index" class="entry">
+        <div v-for="(item, index) in history" :key="item.time + index" class="entry" :class="{fresh: item._fresh, failed: item._fresh && !item.ok}">
           <div class="entry-head">
             <span :class="item.ok ? 'ok' : 'fail'">{{ item.ok ? '●' : '×' }}</span>
             <span class="action">{{ item.action }}</span>
@@ -122,7 +131,8 @@ const { createApp } = Vue;
 createApp({
   data: () => ({
     tools: [], selectedToolName: '', toolArguments: {}, targets: [], target: '',
-    screenUrl: '', screenReady: false, effect: null, effectId: 0,
+    screenUrl: '', screenReady: false, screenRevision: 0, screenTarget: '', screenAnimated: false,
+    effect: null, effectId: 0,
     history: [], busy: false, status: 'Viewer connected', error: '', resultText: '', events: null
   }),
   computed: {
@@ -194,28 +204,34 @@ createApp({
       this.events.onerror = () => { if (!this.error) this.status = 'Viewer reconnecting…'; };
     },
     applyViewerEvent(event) {
-      if (event.type === 'state' && event.screenshot?.revision) this.showScreenshot(event.screenshot.revision);
-      else if (event.type === 'screenshot') this.showScreenshot(event.revision);
+      if (event.type === 'state' && event.screenshot?.revision) this.showScreenshot(event.screenshot.revision, event.screenshot.target, false);
+      else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, true);
       else if (event.type === 'gesture') this.showGesture(event);
-      else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift(event.entry);
+      else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift({...event.entry, _fresh: true});
       this.status = 'Viewer connected';
     },
     showGesture(event) {
       const image = this.$refs.screen;
-      if (!image?.naturalWidth || !image.naturalHeight) return;
-      const xp = x => x * 100 / image.naturalWidth;
-      const yp = y => y * 100 / image.naturalHeight;
+      if (!image?.naturalWidth || !image.naturalHeight || event.target !== this.screenTarget) return;
+      const xp = x => Math.max(0, Math.min(100, x * 100 / image.naturalWidth));
+      const yp = y => Math.max(0, Math.min(100, y * 100 / image.naturalHeight));
+      const duration = Math.max(250, Math.min(3000, Number(event.duration) || 300));
       if (event.gesture === 'tap') {
         this.effect = {type: 'tap', id: ++this.effectId, x: xp(event.x), y: yp(event.y)};
       } else if (event.gesture === 'swipe') {
         this.effect = {
           type: 'swipe', id: ++this.effectId,
-          x1: xp(event.x1), y1: yp(event.y1), x2: xp(event.x2), y2: yp(event.y2)
+          x1: xp(event.x1), y1: yp(event.y1), x2: xp(event.x2), y2: yp(event.y2), duration
         };
+      } else if (event.gesture === 'long_press') {
+        this.effect = {type: 'long_press', id: ++this.effectId, x: xp(event.x), y: yp(event.y), duration};
       }
     },
-    showScreenshot(revision) {
+    showScreenshot(revision, target, animate) {
       this.screenReady = false;
+      this.screenRevision = revision;
+      this.screenTarget = target || '';
+      this.screenAnimated = animate;
       this.screenUrl = `/api/viewer/screenshot?revision=${encodeURIComponent(revision)}`;
     },
     screenError() { this.error = 'Unable to load the cached screenshot'; this.screenReady = false; },

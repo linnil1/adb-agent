@@ -667,7 +667,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def tap_tool(x: int, y: int, target: str | None = None) -> dict:
         """Tap non-negative device-pixel coordinates."""
         result = call("tap", x=x, y=y, target=target)
-        publish("gesture", gesture="tap", x=x, y=y)
+        publish("gesture", gesture="tap", target=result["target"], x=x, y=y)  # type: ignore[index]
         return result  # type: ignore[return-value]
 
     @server.tool(name="swipe")
@@ -678,7 +678,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Swipe between device-pixel coordinates."""
         result = call("swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration=duration, target=target)
         publish(
-            "gesture", gesture="swipe",
+            "gesture", gesture="swipe", target=result["target"],  # type: ignore[index]
             x1=x1, y1=y1, x2=x2, y2=y2, duration=duration,
         )
         return result  # type: ignore[return-value]
@@ -688,7 +688,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         x: int, y: int, duration: int = 1000, target: str | None = None,
     ) -> dict:
         """Long-press device-pixel coordinates."""
-        return call("long-press", x=x, y=y, duration=duration, target=target)  # type: ignore[return-value]
+        result = call("long-press", x=x, y=y, duration=duration, target=target)
+        publish(
+            "gesture", gesture="long_press", target=result["target"],  # type: ignore[index]
+            x=x, y=y, duration=duration,
+        )
+        return result  # type: ignore[return-value]
 
     @server.tool(name="type_text")
     def type_text_tool(text: str, target: str | None = None) -> dict:
