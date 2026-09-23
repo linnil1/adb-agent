@@ -310,6 +310,14 @@ def describe_ui(target: str, xml: str, output_format: str) -> dict[str, object]:
     return {"target": target, "format": "json", "elements": elements}
 
 
+def description_elements(result: dict[str, object]) -> list[dict[str, object]]:
+    elements = result.get("elements")
+    if isinstance(elements, list):
+        return elements
+    xml = result.get("xml")
+    return parse_ui_xml(xml) if isinstance(xml, str) else []
+
+
 def dump_ui(adb: Adb, serial: str) -> str:
     try:
         text = adb.run(
@@ -564,6 +572,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     viewer_events: deque[dict[str, object]] = deque(maxlen=200)
     viewer_sequence = 0
     latest_screenshot: dict[str, object] = {}
+    latest_description: dict[str, object] = {}
     server = MCPServer(
         "android-device-control",
         instructions="Inspect and control an authorized Android device over ADB.",
@@ -609,6 +618,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def cache_screenshot(target: str, png: bytes) -> int:
         with viewer_lock:
             revision = int(latest_screenshot.get("revision", 0)) + 1
+            latest_description.clear()
             latest_screenshot.update({
                 "revision": revision,
                 "target": target,
@@ -617,6 +627,17 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             })
         publish("screenshot", revision=revision, target=target)
         return revision
+
+    def cache_description(target: str, elements: list[dict[str, object]]) -> None:
+        description = {
+            "target": target,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "elements": elements,
+        }
+        with viewer_lock:
+            latest_description.clear()
+            latest_description.update(description)
+        publish("description", **description)
 
     @server.tool(name="list_targets")
     def list_targets_tool() -> list[dict[str, str]]:
@@ -661,7 +682,10 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         target: str | None = None,
     ) -> dict:
         """Return raw uiautomator XML or parsed JSON elements (default)."""
-        return call("describe-screen", format=format, target=target)  # type: ignore[return-value]
+        result = call("describe-screen", format=format, target=target)
+        elements = description_elements(result)  # type: ignore[arg-type]
+        cache_description(result["target"], elements)  # type: ignore[index]
+        return result  # type: ignore[return-value]
 
     @server.tool(name="tap")
     def tap_tool(x: int, y: int, target: str | None = None) -> dict:
@@ -782,6 +806,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
                     "screenshot": {
                         key: value for key, value in latest_screenshot.items() if key != "png"
                     },
+                    "description": dict(latest_description),
                 }
             yield "event: viewer\ndata: " + json.dumps(initial, ensure_ascii=False) + "\n\n"
             idle = 0

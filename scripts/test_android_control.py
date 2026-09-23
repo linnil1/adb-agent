@@ -135,6 +135,12 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(original, {
             "target": "device-1", "format": "original", "xml": xml,
         })
+        self.assertEqual(
+            android.description_elements(original)[0]["label"], "OK",
+        )
+        self.assertEqual(
+            android.description_elements(parsed), parsed["elements"],
+        )
 
     def test_truncated_xml_keeps_complete_nodes(self):
         xml = (

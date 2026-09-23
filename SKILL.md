@@ -15,6 +15,8 @@ Use `scripts/android_control.py` as the automation tool. It is a dependency-free
 4. Use the `center` coordinates returned by `describe-screen` directly with `tap`, `swipe`, or `long-press`.
 5. Inspect the screen again after navigation or another state-changing action.
 
+Preserve the current app session during ordinary automation. Do not repeatedly launch or force-restart an app when navigation can continue from its current state. Use `launch-app --force-restart` only when the user requests a clean start or the app is known to be stuck or corrupted.
+
 Device mutations affect the user's phone. Stay within the requested task. Confirm before consequential actions such as purchases, sending messages, deleting data, changing security settings, or publishing content. Stop when the displayed target is ambiguous.
 
 ## Argument schema
@@ -42,7 +44,7 @@ python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
 
 MCP mode defaults to `127.0.0.1:8000` with endpoint `/mcp` and requires the packages in `requirements-mcp.txt`. It intentionally does not support the superseded SSE transport.
 
-The same listener serves a lightweight Vue viewer at `/`. It requires no Node.js build step, obtains the registered tools and their JSON input schemas from the MCP server, and invokes the same tool handlers as MCP clients. It provides in-memory history, crossfades new screenshots, highlights new success or failure entries, and animates target-matching tap, swipe, and long-press calls from any MCP client over the captured screenshot.
+The same listener serves a lightweight Vue viewer at `/`. It requires no Node.js build step, obtains the registered tools and their JSON input schemas from the MCP server, and invokes the same tool handlers as MCP clients. It provides in-memory history, crossfades new screenshots, highlights new success or failure entries, and animates target-matching tap, swipe, long-press, and `describe_screen` accessibility bounds over the captured screenshot.
 
 Loading the viewer never runs an ADB action. Only an explicit `screenshot` tool call from MCP or the dashboard captures a new PNG. The server caches the latest image in memory and pushes a notification to open viewers; their browser event stream is only a dashboard update channel and does not add an MCP SSE transport.
 

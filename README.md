@@ -36,7 +36,7 @@ python3 scripts/android_control.py --mcp
 
 The endpoint is `http://127.0.0.1:8000/mcp` by default. Override the listener with `--host` and `--port`. This project supports Streamable HTTP only, not the superseded SSE transport.
 
-The same server provides a build-free Vue viewer at `http://127.0.0.1:8000/`. It discovers every registered MCP tool and its input schema, can invoke those same registered handlers, and shows in-memory command history. Target-matching tap, swipe, and long-press calls from any MCP client animate over the cached screenshot; screenshot replacements crossfade, and new history entries highlight success or failure. Vue loads from a CDN; Node.js is not required.
+The same server provides a build-free Vue viewer at `http://127.0.0.1:8000/`. It discovers every registered MCP tool and its input schema, can invoke those same registered handlers, and shows in-memory command history. Target-matching tap, swipe, and long-press calls from any MCP client animate over the cached screenshot. `describe_screen` animates labeled accessibility bounds, screenshot replacements crossfade, and new history entries highlight success or failure. Vue loads from a CDN; Node.js is not required.
 
 Opening the viewer does not run an ADB action. A screenshot is captured only when an MCP client or a user in the dashboard invokes the `screenshot` tool. The server caches that image in memory and notifies open viewers, which then load the cached PNG. The small browser event stream used for these notifications is not an alternate MCP transport; MCP remains Streamable HTTP only.
 
