@@ -10,6 +10,13 @@ python3 scripts/android_control.py --action set-default-target --target TARGET
 
 See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safety boundaries.
 
+`describe-screen` returns parsed JSON by default and can preserve the original `uiautomator` XML when requested:
+
+```bash
+python3 scripts/android_control.py --action describe-screen --format json
+python3 scripts/android_control.py --action describe-screen --format original
+```
+
 ## Streamable HTTP MCP
 
 Install the official Python MCP SDK and start the same program in MCP mode:

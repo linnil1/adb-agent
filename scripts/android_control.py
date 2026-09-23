@@ -29,7 +29,7 @@ ACTIONS = (
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(), "screenshot": {"output"},
-    "describe-screen": set(), "tap": {"x", "y"},
+    "describe-screen": {"format"}, "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
     "press-key": {"key"}, "home": set(), "back": set(),
@@ -280,6 +280,15 @@ def parse_ui_xml(xml: str) -> list[dict[str, object]]:
     return elements
 
 
+def describe_ui(serial: str, xml: str, output_format: str) -> dict[str, object]:
+    if output_format == "original":
+        return {"serial": serial, "format": "original", "xml": xml}
+    elements = parse_ui_xml(xml)
+    if not elements:
+        raise ControlError("no UI elements found")
+    return {"serial": serial, "format": "json", "elements": elements}
+
+
 def dump_ui(adb: Adb, serial: str) -> str:
     try:
         text = adb.run(
@@ -341,7 +350,7 @@ def validate_action_args(args: argparse.Namespace) -> None:
         require(args.target, "--target")
     for field in required:
         require(getattr(args, field), "--" + field.replace("_", "-"))
-    optional_fields = {"output", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
+    optional_fields = {"output", "format", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
     extras = [field for field in optional_fields - ACTION_FIELDS[args.action] if getattr(args, field) is not None]
     if extras:
         flags = ", ".join("--" + field.replace("_", "-") for field in sorted(extras))
@@ -380,10 +389,7 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         output.write_bytes(png)
         return {"serial": serial, "path": str(output), "bytes": len(png)}
     elif action == "describe-screen":
-        elements = parse_ui_xml(dump_ui(adb, serial))
-        if not elements:
-            raise ControlError("no UI elements found")
-        return {"serial": serial, "elements": elements}
+        return describe_ui(serial, dump_ui(adb, serial), args.format or "json")
     elif action == "tap":
         shell(adb, serial, ["input", "tap", str(args.x), str(args.y)])
         return {"serial": serial, "action": action, "point": [args.x, args.y]}
@@ -425,6 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", help="MCP bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, help="MCP bind port (default: 8000)")
     parser.add_argument("--output")
+    parser.add_argument("--format", choices=("original", "json"))
     parser.add_argument("--x", type=int)
     parser.add_argument("--y", type=int)
     parser.add_argument("--x1", type=int)
@@ -570,9 +577,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             raise ToolError(str(error)) from None
 
     @server.tool(name="describe_screen")
-    def describe_screen_tool(target: str | None = None) -> dict:
-        """Return UI labels, bounds, and center coordinates from uiautomator."""
-        return call("describe-screen", target=target)  # type: ignore[return-value]
+    def describe_screen_tool(
+        format: Literal["original", "json"] = "json",
+        target: str | None = None,
+    ) -> dict:
+        """Return raw uiautomator XML or parsed JSON elements (default)."""
+        return call("describe-screen", format=format, target=target)  # type: ignore[return-value]
 
     @server.tool(name="tap")
     def tap_tool(x: int, y: int, target: str | None = None) -> dict:

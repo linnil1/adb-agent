@@ -56,7 +56,7 @@ Action-specific schema:
 | `set-default-target` | `--target TARGET` | none |
 | `status` | none | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`) |
-| `describe-screen` | none | none |
+| `describe-screen` | none | `--format json\|original` (default `json`) |
 | `tap` | `--x INT --y INT` | none |
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` ms (default `300`) |
 | `long-press` | `--x INT --y INT` | `--duration INT` ms (default `1000`) |
@@ -76,6 +76,7 @@ python3 scripts/android_control.py --action status
 python3 scripts/android_control.py --action set-default-target --target 127.0.0.1:5555
 python3 scripts/android_control.py --action screenshot --output /tmp/android-screen.png
 python3 scripts/android_control.py --action describe-screen
+python3 scripts/android_control.py --action describe-screen --format original
 python3 scripts/android_control.py --action tap --x 540 --y 260
 python3 scripts/android_control.py --action swipe --x1 540 --y1 1800 --x2 540 --y2 500 --duration 300
 python3 scripts/android_control.py --action type-text --text "hello world"
@@ -84,7 +85,7 @@ python3 scripts/android_control.py --action status --target 127.0.0.1:5555
 python3 scripts/android_control.py --mcp
 ```
 
-The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` returns labels, bounds, centers, classes, packages, and clickability. Prefer visible text or content descriptions over unlabeled clickable nodes.
+The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning labels, bounds, centers, classes, packages, and clickability; `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or content descriptions over unlabeled clickable nodes.
 
 ## ADB discovery
 

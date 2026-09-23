@@ -67,6 +67,17 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(elements[0]["label"], "A & B > C")
         self.assertEqual(elements[0]["center"], [50, 30])
 
+    def test_describe_ui_supports_json_and_original_xml(self):
+        xml = '<hierarchy><node text="OK" clickable="true" bounds="[0,0][10,20]"/></hierarchy>'
+        parsed = android.describe_ui("device-1", xml, "json")
+        self.assertEqual(parsed["format"], "json")
+        self.assertEqual(parsed["elements"][0]["center"], [5, 10])
+
+        original = android.describe_ui("device-1", xml, "original")
+        self.assertEqual(original, {
+            "serial": "device-1", "format": "original", "xml": xml,
+        })
+
     def test_truncated_xml_keeps_complete_nodes(self):
         xml = (
             '<node text="OK" clickable="true" bounds="[0,0][10,10]"/>'
@@ -83,6 +94,15 @@ class AndroidControlTests(unittest.TestCase):
         bad = android.build_parser().parse_args(["--action", "status", "--x", "1"])
         with self.assertRaises(android.ControlError):
             android.validate_action_args(bad)
+        describe = android.build_parser().parse_args([
+            "--action", "describe-screen", "--format", "original",
+        ])
+        android.validate_action_args(describe)
+        wrong_format_action = android.build_parser().parse_args([
+            "--action", "status", "--format", "json",
+        ])
+        with self.assertRaises(android.ControlError):
+            android.validate_action_args(wrong_format_action)
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             android.build_parser().parse_args(["--action", "status", "--serial", "device-1"])
 
