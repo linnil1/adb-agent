@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import html
 import json
 import os
@@ -12,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -473,7 +475,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         from mcp.server.mcpserver import Image
         from mcp.server.mcpserver.exceptions import ToolError
         from starlette.requests import Request
-        from starlette.responses import FileResponse, JSONResponse, Response
+        from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
     except ImportError:
         raise ControlError(
             "MCP support requires the 'mcp' package; install requirements-mcp.txt"
@@ -482,10 +484,20 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     resolved_adb = resolve_adb(adb_path)
     web_root = Path(__file__).resolve().parent.parent / "web"
     history: deque[dict[str, object]] = deque(maxlen=100)
+    viewer_lock = threading.Lock()
+    viewer_events: deque[dict[str, object]] = deque(maxlen=200)
+    viewer_sequence = 0
+    latest_screenshot: dict[str, object] = {}
     server = MCPServer(
         "android-device-control",
         instructions="Inspect and control an authorized Android device over ADB.",
     )
+
+    def publish(event_type: str, **values: object) -> None:
+        nonlocal viewer_sequence
+        with viewer_lock:
+            viewer_sequence += 1
+            viewer_events.append({"id": viewer_sequence, "type": event_type, **values})
 
     def record(action: str, values: dict[str, object], ok: bool, error: str | None = None) -> None:
         safe_values = {key: value for key, value in values.items() if value is not None}
@@ -497,7 +509,9 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         }
         if error:
             entry["error"] = error
-        history.appendleft(entry)
+        with viewer_lock:
+            history.appendleft(entry)
+        publish("history", entry=entry)
 
     def call(action: str, **values: object) -> object:
         try:
@@ -508,13 +522,25 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             record(action, values, False, str(error))
             raise ToolError(str(error)) from None
 
-    def capture_png(target: str | None = None) -> bytes:
+    def capture_png(target: str | None = None) -> tuple[str, bytes]:
         adb = Adb(resolved_adb, timeout)
         selected = resolve_serial(adb, target)
         png = adb.run(["exec-out", "screencap", "-p"], serial=selected, timeout=60)
         if not png.startswith(PNG_MAGIC):
             raise ControlError("screenshot response is not a valid PNG")
-        return png
+        return selected, png
+
+    def cache_screenshot(target: str, png: bytes) -> int:
+        with viewer_lock:
+            revision = int(latest_screenshot.get("revision", 0)) + 1
+            latest_screenshot.update({
+                "revision": revision,
+                "target": target,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "png": png,
+            })
+        publish("screenshot", revision=revision, target=target)
+        return revision
 
     @server.tool(name="list_targets")
     def list_targets_tool() -> list[dict[str, str]]:
@@ -535,7 +561,8 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def screenshot_tool(target: str | None = None):
         """Capture the current device screen as a PNG image."""
         try:
-            png = capture_png(target)
+            selected, png = capture_png(target)
+            cache_screenshot(selected, png)
             record("screenshot", {"target": target}, True)
             return Image(data=png, format="png")
         except ControlError as error:
@@ -550,7 +577,9 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     @server.tool(name="tap")
     def tap_tool(x: int, y: int, target: str | None = None) -> dict:
         """Tap non-negative device-pixel coordinates."""
-        return call("tap", x=x, y=y, target=target)  # type: ignore[return-value]
+        result = call("tap", x=x, y=y, target=target)
+        publish("gesture", gesture="tap", x=x, y=y)
+        return result  # type: ignore[return-value]
 
     @server.tool(name="swipe")
     def swipe_tool(
@@ -558,7 +587,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         duration: int = 300, target: str | None = None,
     ) -> dict:
         """Swipe between device-pixel coordinates."""
-        return call("swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration=duration, target=target)  # type: ignore[return-value]
+        result = call("swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration=duration, target=target)
+        publish(
+            "gesture", gesture="swipe",
+            x1=x1, y1=y1, x2=x2, y2=y2, duration=duration,
+        )
+        return result  # type: ignore[return-value]
 
     @server.tool(name="long_press")
     def long_press_tool(
@@ -604,35 +638,105 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     async def dashboard(_request: Request) -> Response:
         return FileResponse(web_root / "index.html", media_type="text/html")
 
-    @server.custom_route("/api/screenshot", methods=["GET"])
-    async def dashboard_screenshot(request: Request) -> Response:
-        target = request.query_params.get("target") or None
-        try:
-            return Response(
-                capture_png(target),
-                media_type="image/png",
-                headers={"Cache-Control": "no-store"},
+    @server.custom_route("/api/viewer/screenshot", methods=["GET"])
+    async def dashboard_screenshot(_request: Request) -> Response:
+        with viewer_lock:
+            png = latest_screenshot.get("png")
+            revision = latest_screenshot.get("revision")
+        if not isinstance(png, bytes):
+            return JSONResponse(
+                {"ok": False, "error": "no screenshot has been captured"},
+                status_code=404,
             )
-        except ControlError as error:
-            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+        return Response(
+            png,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Screenshot-Revision": str(revision),
+            },
+        )
+
+    @server.custom_route("/api/viewer/events", methods=["GET"])
+    async def dashboard_events(request: Request) -> Response:
+        requested_after = request.query_params.get("after")
+        if requested_after is None:
+            requested_after = request.headers.get("last-event-id")
+        with viewer_lock:
+            current_sequence = viewer_sequence
+        try:
+            after = int(requested_after) if requested_after is not None else current_sequence
+        except (TypeError, ValueError):
+            after = current_sequence
+
+        async def stream():
+            nonlocal after
+            with viewer_lock:
+                initial = {
+                    "type": "state",
+                    "screenshot": {
+                        key: value for key, value in latest_screenshot.items() if key != "png"
+                    },
+                }
+            yield "event: viewer\ndata: " + json.dumps(initial, ensure_ascii=False) + "\n\n"
+            idle = 0
+            while not await request.is_disconnected():
+                with viewer_lock:
+                    pending = [event.copy() for event in viewer_events if int(event["id"]) > after]
+                if pending:
+                    idle = 0
+                    for event in pending:
+                        after = int(event["id"])
+                        yield (
+                            f"id: {after}\nevent: viewer\ndata: "
+                            + json.dumps(event, ensure_ascii=False)
+                            + "\n\n"
+                        )
+                else:
+                    idle += 1
+                    if idle >= 60:
+                        idle = 0
+                        yield ": keep-alive\n\n"
+                await asyncio.sleep(0.25)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @server.custom_route("/api/history", methods=["GET"])
     async def dashboard_history(_request: Request) -> Response:
-        return JSONResponse({"history": list(history)})
+        with viewer_lock:
+            entries = list(history)
+        return JSONResponse({"history": entries})
 
-    @server.custom_route("/api/command", methods=["POST"])
-    async def dashboard_command(request: Request) -> Response:
+    @server.custom_route("/api/tools", methods=["GET"])
+    async def dashboard_tools(_request: Request) -> Response:
+        tools = await server.list_tools()
+        return JSONResponse({
+            "tools": [tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in tools]
+        })
+
+    @server.custom_route("/api/tools/call", methods=["POST"])
+    async def dashboard_tool_call(request: Request) -> Response:
         try:
             payload = await request.json()
         except (json.JSONDecodeError, UnicodeDecodeError):
             return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
-        if not isinstance(payload, dict) or payload.get("action") not in ACTIONS:
-            return JSONResponse({"ok": False, "error": "invalid action"}, status_code=400)
-        action = str(payload["action"])
-        allowed = ACTION_FIELDS[action] | {"target"}
-        values = {key: payload[key] for key in allowed if key in payload}
+        if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
+            return JSONResponse({"ok": False, "error": "name must be a tool name"}, status_code=400)
+        arguments = payload.get("arguments", {})
+        if not isinstance(arguments, dict):
+            return JSONResponse({"ok": False, "error": "arguments must be an object"}, status_code=400)
         try:
-            return JSONResponse({"ok": True, "result": call(action, **values)})
+            result = await server.call_tool(payload["name"], arguments)
+            body = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+            for content in body.get("content", []):
+                if content.get("type") == "image":
+                    content.pop("data", None)
+                    content["cachedForViewer"] = True
+            return JSONResponse({"ok": True, "result": body})
         except ToolError as error:
             return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
 

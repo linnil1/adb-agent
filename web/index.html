@@ -3,52 +3,56 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Android Device Control</title>
+  <title>Android Device Viewer</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #0a0d12; color: #e8edf5; }
-    button, input, select { font: inherit; }
-    button, select, input { border: 1px solid #2a3342; background: #141a23; color: inherit; border-radius: 8px; }
+    body { margin: 0; background: #090c11; color: #e8edf5; }
+    button, input, select { font: inherit; border: 1px solid #2a3342; background: #141a23; color: inherit; border-radius: 8px; }
     button { padding: 8px 12px; cursor: pointer; }
     button:hover, button.active { border-color: #60a5fa; background: #17243a; }
     button:disabled { opacity: .5; cursor: wait; }
-    input, select { padding: 9px 11px; }
+    input, select { padding: 9px 11px; min-width: 0; }
     .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
-    header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #202733; background: #0e1219; }
+    header { display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-bottom: 1px solid #202733; background: #0e1219; }
     header h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 650; }
-    header select { max-width: 250px; }
-    main { min-height: 0; display: grid; grid-template-columns: minmax(320px, 1fr) minmax(300px, 430px); }
+    header input { width: 220px; }
+    main { min-height: 0; display: grid; grid-template-columns: minmax(320px, 1fr) minmax(310px, 420px); }
     .viewer { min-height: 0; display: grid; place-items: center; padding: 18px; overflow: auto; background: radial-gradient(circle at 50% 30%, #172131, #090c11 60%); }
     .phone { position: relative; line-height: 0; max-width: 100%; max-height: calc(100vh - 94px); border: 1px solid #303b4d; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 70px #000a; touch-action: none; user-select: none; }
     .phone img { display: block; max-width: 100%; max-height: calc(100vh - 94px); object-fit: contain; pointer-events: none; }
-    .empty { min-width: 300px; min-height: 500px; display: grid; place-items: center; color: #8190a5; background: #10151d; }
+    .empty { width: min(360px, 80vw); min-height: 540px; padding: 30px; display: grid; place-items: center; text-align: center; line-height: 1.5; color: #8190a5; background: #10151d; }
     .tap-pulse { position: absolute; width: 34px; height: 34px; margin: -17px; border: 3px solid #60a5fa; border-radius: 50%; animation: pulse .7s ease-out forwards; pointer-events: none; }
     .swipe-line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .swipe-line line { stroke: #fb7185; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 22 14; animation: dash .65s linear, fade .9s ease-out forwards; }
     @keyframes pulse { from { transform: scale(.3); opacity: 1; } to { transform: scale(2.4); opacity: 0; } }
     @keyframes dash { to { stroke-dashoffset: -72; } }
     @keyframes fade { 70% { opacity: 1; } 100% { opacity: 0; } }
-    aside { min-height: 0; border-left: 1px solid #202733; display: grid; grid-template-rows: auto auto 1fr; background: #0e1219; }
+    aside { min-height: 0; border-left: 1px solid #202733; display: grid; grid-template-rows: auto 1fr; background: #0e1219; }
     .panel { padding: 14px; border-bottom: 1px solid #202733; }
-    .panel h2 { font-size: 12px; margin: 0 0 10px; color: #91a0b6; text-transform: uppercase; letter-spacing: .08em; }
-    .toolbar, .command-row { display: flex; gap: 8px; }
-    .command-row input { min-width: 0; flex: 1; }
+    .panel h2, .history h2 { font-size: 12px; color: #91a0b6; text-transform: uppercase; letter-spacing: .08em; }
+    .panel h2 { margin: 0 0 10px; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tool-form { display: grid; gap: 9px; }
+    .tool-form label { display: grid; gap: 5px; color: #aeb9c9; font-size: 12px; }
+    .tool-form select { width: 100%; }
+    .required { color: #fb7185; }
     .hint, .status { margin-top: 9px; font-size: 12px; color: #8190a5; line-height: 1.45; }
     .status.error { color: #fb7185; }
+    .result { max-height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 9px 0 0; font-size: 11px; color: #9ba9bc; }
     .history { min-height: 0; overflow: auto; padding: 0; }
-    .history h2 { position: sticky; top: 0; margin: 0; padding: 14px; background: #0e1219ee; border-bottom: 1px solid #202733; font-size: 12px; color: #91a0b6; text-transform: uppercase; letter-spacing: .08em; }
+    .history h2 { position: sticky; top: 0; margin: 0; padding: 14px; background: #0e1219ee; border-bottom: 1px solid #202733; }
     .entry { padding: 11px 14px; border-bottom: 1px solid #1b222d; font-size: 12px; }
     .entry-head { display: flex; gap: 8px; align-items: center; }
     .entry .action { color: #93c5fd; font-family: ui-monospace, monospace; }
     .entry .time { margin-left: auto; color: #657389; }
-    .entry .ok { color: #4ade80; }
-    .entry .fail { color: #fb7185; }
+    .entry .ok { color: #4ade80; } .entry .fail { color: #fb7185; }
     .entry pre { white-space: pre-wrap; word-break: break-word; color: #9ba9bc; margin: 6px 0 0; font-size: 11px; }
     @media (max-width: 850px) {
+      header { flex-wrap: wrap; } header h1 { width: 100%; }
       main { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 70vh) auto; }
-      aside { border-left: 0; border-top: 1px solid #202733; min-height: 500px; }
+      aside { border-left: 0; border-top: 1px solid #202733; min-height: 600px; }
       .phone, .phone img { max-height: calc(70vh - 36px); }
     }
   </style>
@@ -56,22 +60,17 @@
 <body>
 <div id="app" class="app">
   <header>
-    <h1>Android Device Control</h1>
-    <select v-model="target" @change="refreshScreenshot">
-      <option value="">Automatic target</option>
-      <option v-for="item in targets" :key="item.serial" :value="item.serial">
-        {{ item.model || item.serial }} · {{ item.state }}
-      </option>
-    </select>
-    <button @click="setDefaultTarget" :disabled="busy || !target">Set default</button>
-    <button @click="refreshScreenshot" :disabled="busy">Refresh</button>
+    <h1>Android Device Viewer</h1>
+    <input v-model.trim="target" list="target-list" placeholder="Optional target">
+    <datalist id="target-list"><option v-for="item in targets" :value="item.serial">{{ item.model || item.serial }}</option></datalist>
+    <button @click="invokeNamed('screenshot')" :disabled="busy">Screenshot</button>
   </header>
 
   <main>
     <section class="viewer">
-      <div class="phone" @pointerdown="pointerDown" @pointerup="pointerUp">
+      <div class="phone">
         <img v-if="screenUrl" ref="screen" :src="screenUrl" @load="screenReady = true" @error="screenError">
-        <div v-else class="empty">No screenshot</div>
+        <div v-else class="empty">Waiting for an MCP or dashboard screenshot action.</div>
         <div v-if="effect?.type === 'tap'" :key="effect.id" class="tap-pulse" :style="{left: effect.x + '%', top: effect.y + '%'}"></div>
         <svg v-if="effect?.type === 'swipe'" :key="effect.id" class="swipe-line" viewBox="0 0 100 100" preserveAspectRatio="none">
           <line :x1="effect.x1" :y1="effect.y1" :x2="effect.x2" :y2="effect.y2"></line>
@@ -81,22 +80,24 @@
 
     <aside>
       <section class="panel">
-        <h2>Pointer action</h2>
-        <div class="toolbar">
-          <button :class="{active: mode === 'tap'}" @click="mode = 'tap'">Tap</button>
-          <button :class="{active: mode === 'swipe'}" @click="mode = 'swipe'">Swipe</button>
-        </div>
-        <div class="hint">Tap the screen once, or drag from start to end in Swipe mode.</div>
-      </section>
-
-      <section class="panel">
-        <h2>Command</h2>
-        <form class="command-row" @submit.prevent="submitCommand">
-          <input v-model="command" placeholder="home · tap 540 260 · type-text hello">
-          <button :disabled="busy">Run</button>
+        <h2>MCP tools</h2>
+        <form class="tool-form" @submit.prevent="invokeSelected">
+          <select v-model="selectedToolName" @change="resetToolArguments">
+            <option v-for="tool in tools" :key="tool.name" :value="tool.name">{{ tool.name }}</option>
+          </select>
+          <div class="hint" v-if="selectedTool">{{ selectedTool.description }}</div>
+          <label v-for="field in toolFields" :key="field.name">
+            <span>{{ field.name }} <span v-if="field.required" class="required">*</span></span>
+            <select v-if="field.schema.enum" v-model="toolArguments[field.name]" :required="field.required">
+              <option v-if="!field.required" value="">Unset</option>
+              <option v-for="choice in field.schema.enum" :key="choice" :value="choice">{{ choice }}</option>
+            </select>
+            <input v-else v-model="toolArguments[field.name]" :type="numeric(field.schema) ? 'number' : 'text'" :required="field.required" :placeholder="field.schema.description || field.schema.title || field.name">
+          </label>
+          <button :disabled="busy || !selectedTool">Run {{ selectedToolName }}</button>
         </form>
-        <div class="hint">Commands: tap, swipe, long-press, type-text, press-key, home, back, status, launch-app, open-url, set-default-target.</div>
         <div class="status" :class="{error: error}">{{ error || status }}</div>
+        <pre v-if="resultText" class="result">{{ resultText }}</pre>
       </section>
 
       <section class="history">
@@ -118,123 +119,109 @@
 
 <script>
 const { createApp } = Vue;
-
 createApp({
   data: () => ({
-    targets: [], target: '', screenUrl: '', screenReady: false,
-    mode: 'tap', gesture: null, effect: null, effectId: 0,
-    command: '', history: [], busy: false, status: '', error: ''
+    tools: [], selectedToolName: '', toolArguments: {}, targets: [], target: '',
+    screenUrl: '', screenReady: false, effect: null, effectId: 0,
+    history: [], busy: false, status: 'Viewer connected', error: '', resultText: '', events: null
   }),
-  async mounted() {
-    await this.loadTargets();
-    await this.refreshScreenshot();
-    await this.loadHistory();
+  computed: {
+    selectedTool() { return this.tools.find(tool => tool.name === this.selectedToolName); },
+    toolSchema() { return this.selectedTool?.inputSchema || {}; },
+    toolFields() {
+      const required = new Set(this.toolSchema.required || []);
+      return Object.entries(this.toolSchema.properties || {}).filter(([name]) => name !== 'target')
+        .map(([name, schema]) => ({name, schema, required: required.has(name)}));
+    }
   },
+  async mounted() {
+    await Promise.all([this.loadTools(), this.loadHistory()]);
+    this.connectEvents();
+  },
+  beforeUnmount() { this.events?.close(); },
   methods: {
-    async api(action, values = {}) {
-      const payload = { action, ...values };
-      if (this.target && action !== 'list-targets') payload.target = this.target;
-      const response = await fetch('/api/command', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    numeric(schema) { return schema.type === 'integer' || schema.type === 'number'; },
+    async loadTools() {
+      try {
+        const response = await fetch('/api/tools', {cache: 'no-store'});
+        if (!response.ok) throw new Error('Unable to load MCP tools');
+        this.tools = (await response.json()).tools || [];
+        this.selectedToolName = this.tools[0]?.name || '';
+        this.resetToolArguments();
+      } catch (error) { this.error = error.message; }
+    },
+    resetToolArguments() {
+      const values = {};
+      for (const field of this.toolFields) values[field.name] = field.schema.default ?? '';
+      this.toolArguments = values;
+    },
+    argumentsFor(tool, values = {}) {
+      const schema = tool?.inputSchema || {}, result = {};
+      for (const [name, value] of Object.entries(values)) {
+        if (value === '' || value === null || value === undefined) continue;
+        const type = schema.properties?.[name]?.type;
+        result[name] = type === 'integer' || type === 'number' ? Number(value) : value;
+      }
+      if (this.target && schema.properties?.target && result.target === undefined) result.target = this.target;
+      return result;
+    },
+    async callTool(name, values = {}) {
+      const tool = this.tools.find(item => item.name === name);
+      if (!tool) throw new Error(`MCP tool is unavailable: ${name}`);
+      const response = await fetch('/api/tools/call', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, arguments: this.argumentsFor(tool, values)})
       });
       const body = await response.json();
-      if (!response.ok || !body.ok) throw new Error(body.error || 'Command failed');
+      if (!response.ok || !body.ok) throw new Error(body.error || 'Tool call failed');
       return body.result;
     },
-    async loadTargets() {
+    async invokeNamed(name, values = {}) {
+      this.busy = true; this.error = ''; this.status = `Running ${name}…`; this.resultText = '';
       try {
-        this.targets = await this.api('list-targets');
-        const ready = this.targets.filter(item => item.state === 'device');
-        if (!this.target && ready.length === 1) this.target = ready[0].serial;
+        const result = await this.callTool(name, values);
+        this.status = `${name} completed`;
+        this.resultText = JSON.stringify(result.structuredContent ?? result.content ?? result, null, 2);
+        if (name === 'list_targets') this.targets = result.structuredContent?.result || result.structuredContent || [];
+        return result;
       } catch (error) { this.error = error.message; }
+      finally { this.busy = false; }
     },
-    async setDefaultTarget() {
-      if (!this.target) return;
-      await this.run('set-default-target');
+    async invokeSelected() { await this.invokeNamed(this.selectedToolName, this.toolArguments); },
+    connectEvents() {
+      this.events = new EventSource('/api/viewer/events');
+      this.events.addEventListener('viewer', event => this.applyViewerEvent(JSON.parse(event.data)));
+      this.events.onerror = () => { if (!this.error) this.status = 'Viewer reconnecting…'; };
     },
-    async refreshScreenshot() {
-      this.screenReady = false;
-      const query = new URLSearchParams({ _: Date.now().toString() });
-      if (this.target) query.set('target', this.target);
-      this.screenUrl = `/api/screenshot?${query}`;
+    applyViewerEvent(event) {
+      if (event.type === 'state' && event.screenshot?.revision) this.showScreenshot(event.screenshot.revision);
+      else if (event.type === 'screenshot') this.showScreenshot(event.revision);
+      else if (event.type === 'gesture') this.showGesture(event);
+      else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift(event.entry);
+      this.status = 'Viewer connected';
     },
-    screenError() { this.error = 'Unable to load screenshot'; this.screenReady = false; },
-    point(event) {
+    showGesture(event) {
       const image = this.$refs.screen;
-      if (!image || !image.naturalWidth) return null;
-      const rect = image.getBoundingClientRect();
-      const px = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
-      const py = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
-      return {
-        x: Math.round(px * image.naturalWidth / rect.width),
-        y: Math.round(py * image.naturalHeight / rect.height),
-        xp: px * 100 / rect.width,
-        yp: py * 100 / rect.height
-      };
-    },
-    pointerDown(event) {
-      if (!this.screenReady || this.busy) return;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      this.gesture = this.point(event);
-    },
-    async pointerUp(event) {
-      if (!this.gesture || this.busy) return;
-      const end = this.point(event), start = this.gesture;
-      this.gesture = null;
-      if (!end) return;
-      if (this.mode === 'tap') {
-        this.effect = {type: 'tap', id: ++this.effectId, x: end.xp, y: end.yp};
-        await this.run('tap', {x: end.x, y: end.y});
-      } else {
-        this.effect = {type: 'swipe', id: ++this.effectId, x1: start.xp, y1: start.yp, x2: end.xp, y2: end.yp};
-        await this.run('swipe', {x1: start.x, y1: start.y, x2: end.x, y2: end.y, duration: 300});
+      if (!image?.naturalWidth || !image.naturalHeight) return;
+      const xp = x => x * 100 / image.naturalWidth;
+      const yp = y => y * 100 / image.naturalHeight;
+      if (event.gesture === 'tap') {
+        this.effect = {type: 'tap', id: ++this.effectId, x: xp(event.x), y: yp(event.y)};
+      } else if (event.gesture === 'swipe') {
+        this.effect = {
+          type: 'swipe', id: ++this.effectId,
+          x1: xp(event.x1), y1: yp(event.y1), x2: xp(event.x2), y2: yp(event.y2)
+        };
       }
     },
-    async run(action, values = {}) {
-      this.busy = true; this.error = ''; this.status = `Running ${action}…`;
-      try {
-        const result = await this.api(action, values);
-        this.status = `${action} completed`;
-        await this.loadHistory();
-        if (!['list-targets', 'status', 'describe-screen'].includes(action)) {
-          setTimeout(() => this.refreshScreenshot(), 220);
-        }
-        return result;
-      } catch (error) {
-        this.error = error.message;
-        await this.loadHistory();
-      } finally { this.busy = false; }
+    showScreenshot(revision) {
+      this.screenReady = false;
+      this.screenUrl = `/api/viewer/screenshot?revision=${encodeURIComponent(revision)}`;
     },
-    tokenize(text) {
-      return [...text.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(match => match[1] ?? match[2] ?? match[3]);
-    },
-    async submitCommand() {
-      const words = this.tokenize(this.command.trim());
-      if (!words.length) return;
-      const action = words.shift();
-      const number = value => { const parsed = Number(value); if (!Number.isInteger(parsed)) throw new Error('Coordinates and duration must be integers'); return parsed; };
-      try {
-        let values = {};
-        if (action === 'tap') values = {x: number(words[0]), y: number(words[1])};
-        else if (action === 'swipe') values = {x1: number(words[0]), y1: number(words[1]), x2: number(words[2]), y2: number(words[3]), duration: words[4] ? number(words[4]) : 300};
-        else if (action === 'long-press') values = {x: number(words[0]), y: number(words[1]), duration: words[2] ? number(words[2]) : 1000};
-        else if (action === 'type-text') values = {text: words.join(' ')};
-        else if (action === 'press-key') values = {key: words[0]};
-        else if (action === 'launch-app') values = {name: words[0]};
-        else if (action === 'open-url') values = {url: words[0]};
-        else if (action === 'set-default-target') {
-          if (!this.target) throw new Error('Select a target first');
-        }
-        else if (!['home', 'back', 'status', 'describe-screen', 'list-targets'].includes(action)) throw new Error('Unknown command');
-        await this.run(action, values);
-        if (!this.error) this.command = '';
-      } catch (error) { this.error = error.message; }
-    },
+    screenError() { this.error = 'Unable to load the cached screenshot'; this.screenReady = false; },
     async loadHistory() {
-      try {
-        const response = await fetch('/api/history', {cache: 'no-store'});
-        this.history = (await response.json()).history || [];
-      } catch (_) {}
+      try { const response = await fetch('/api/history', {cache: 'no-store'}); this.history = (await response.json()).history || []; }
+      catch (_) {}
     },
     formatTime(value) { return new Date(value).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'}); }
   }

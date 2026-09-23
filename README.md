@@ -21,9 +21,11 @@ python3 scripts/android_control.py --mcp
 
 The endpoint is `http://127.0.0.1:8000/mcp` by default. Override the listener with `--host` and `--port`. This project supports Streamable HTTP only, not the superseded SSE transport.
 
-The same server provides a build-free Vue dashboard at `http://127.0.0.1:8000/`. It shows the current screenshot, accepts commands with an in-memory history, and lets you tap or swipe directly on the screenshot with visual feedback. Vue loads from a CDN; Node.js is not required.
+The same server provides a build-free Vue viewer at `http://127.0.0.1:8000/`. It discovers every registered MCP tool and its input schema, can invoke those same registered handlers, shows in-memory command history, and animates tap/swipe calls made by any MCP client. Vue loads from a CDN; Node.js is not required.
 
-When exactly one target is ready, it is selected automatically. With multiple ready targets, either pass `--target` for that call or use `set-default-target` to remember a validated target for one hour. The dashboard exposes the same behavior through its target selector and **Set default** button. Ordinary `--target` use never changes the remembered default.
+Opening the viewer does not run an ADB action. A screenshot is captured only when an MCP client or a user in the dashboard invokes the `screenshot` tool. The server caches that image in memory and notifies open viewers, which then load the cached PNG. The small browser event stream used for these notifications is not an alternate MCP transport; MCP remains Streamable HTTP only.
+
+When exactly one target is ready, it is selected automatically. With multiple ready targets, either pass `--target` for that call or use `set_default_target` to remember a validated target for one hour. All MCP tools, including `list_targets` and `set_default_target`, are available through the dashboard's schema-driven tool form. Ordinary `--target` use never changes the remembered default.
 
 ## Attribution
 
