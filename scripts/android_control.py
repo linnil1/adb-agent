@@ -149,7 +149,7 @@ def parse_devices(output: str) -> list[dict[str, str]]:
         parts = line.strip().split()
         if len(parts) < 2 or parts[1] == "no" or not SERIAL_RE.fullmatch(parts[0]):
             continue
-        item = {"serial": parts[0], "state": parts[1]}
+        item = {"target": parts[0], "state": parts[1]}
         for field in parts[2:]:
             for key in ("model", "product", "device"):
                 if field.startswith(key + ":"):
@@ -208,18 +208,18 @@ def resolve_serial(adb: Adb, supplied: str | None) -> str:
         raise ControlError("no ready Android device connected")
     if len(ready) > 1:
         remembered = read_default_target()
-        if remembered and any(item["serial"] == remembered for item in ready):
+        if remembered and any(item["target"] == remembered for item in ready):
             return remembered
-        names = ", ".join(item["serial"] for item in ready)
+        names = ", ".join(item["target"] for item in ready)
         raise AmbiguousTargetError(
             f"multiple ready targets ({names}); specify --target or use set-default-target"
         )
-    return ready[0]["serial"]
+    return ready[0]["target"]
 
 
 def set_default_target(adb: Adb, target: str) -> dict[str, object]:
     validate_serial(target)
-    ready = {item["serial"] for item in list_targets(adb) if item["state"] == "device"}
+    ready = {item["target"] for item in list_targets(adb) if item["state"] == "device"}
     if target not in ready:
         raise ControlError(f"target is not connected and ready: {target}")
     write_default_target(target)
@@ -272,6 +272,16 @@ def parse_ui_xml(xml: str) -> list[dict[str, object]]:
         enabled = attribute(tag, "enabled") == "true"
         checked = attribute(tag, "checked") == "true"
         focusable = attribute(tag, "focusable") == "true"
+        states = [
+            name for name, active in (
+                ("clickable", clickable),
+                ("selected", selected),
+                ("scrollable", scrollable),
+                ("enabled", enabled),
+                ("checked", checked),
+                ("focusable", focusable),
+            ) if active
+        ]
         if not text and not description and not clickable and not selected and not scrollable:
             continue
         bounds = BOUNDS_RE.fullmatch(attribute(tag, "bounds"))
@@ -281,28 +291,23 @@ def parse_ui_xml(xml: str) -> list[dict[str, object]]:
         elements.append({
             "label": text or description or class_name.rsplit(".", 1)[-1] or "element",
             "text": text,
-            "content_description": description,
+            "description": description,
             "class": class_name,
             "package": attribute(tag, "package"),
-            "clickable": clickable,
-            "selected": selected,
-            "scrollable": scrollable,
-            "enabled": enabled,
-            "checked": checked,
-            "focusable": focusable,
+            "states": states,
             "bounds": [x1, y1, x2, y2],
             "center": [round((x1 + x2) / 2), round((y1 + y2) / 2)],
         })
     return elements
 
 
-def describe_ui(serial: str, xml: str, output_format: str) -> dict[str, object]:
+def describe_ui(target: str, xml: str, output_format: str) -> dict[str, object]:
     if output_format == "original":
-        return {"serial": serial, "format": "original", "xml": xml}
+        return {"target": target, "format": "original", "xml": xml}
     elements = parse_ui_xml(xml)
     if not elements:
         raise ControlError("no UI elements found")
-    return {"serial": serial, "format": "json", "elements": elements}
+    return {"target": target, "format": "json", "elements": elements}
 
 
 def dump_ui(adb: Adb, serial: str) -> str:
@@ -419,16 +424,16 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
                         battery[key.lower()] = value
         except ControlError:
             pass
-        return {"serial": serial, "state": adb.run(["get-state"], serial=serial).decode().strip(), "properties": props, "battery": battery}
+        return {"target": serial, "state": adb.run(["get-state"], serial=serial).decode().strip(), "properties": props, "battery": battery}
     elif action == "list-packages":
         installed = packages(adb, serial, refresh=True)
-        return {"serial": serial, "packages": installed, "count": len(installed)}
+        return {"target": serial, "packages": installed, "count": len(installed)}
     elif action == "current-focus":
         output = shell(adb, serial, ["dumpsys", "window"]).decode("utf-8", "replace")
         focused = parse_current_focus(output)
         if not focused:
             raise ControlError("focused activity not found in dumpsys window")
-        return {"serial": serial, **focused}
+        return {"target": serial, **focused}
     elif action == "screenshot":
         png = adb.run(["exec-out", "screencap", "-p"], serial=serial, timeout=60)
         if not png.startswith(PNG_MAGIC):
@@ -436,25 +441,25 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         output = Path(args.output).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(png)
-        return {"serial": serial, "path": str(output), "bytes": len(png)}
+        return {"target": serial, "path": str(output), "bytes": len(png)}
     elif action == "describe-screen":
         return describe_ui(serial, dump_ui(adb, serial), args.format or "json")
     elif action == "tap":
         shell(adb, serial, ["input", "tap", str(args.x), str(args.y)])
-        return {"serial": serial, "action": action, "point": [args.x, args.y]}
+        return {"target": serial, "action": action, "point": [args.x, args.y]}
     elif action == "swipe":
         shell(adb, serial, ["input", "swipe", str(args.x1), str(args.y1), str(args.x2), str(args.y2), str(args.duration)])
-        return {"serial": serial, "action": action, "from": [args.x1, args.y1], "to": [args.x2, args.y2], "duration_ms": args.duration}
+        return {"target": serial, "action": action, "from": [args.x1, args.y1], "to": [args.x2, args.y2], "duration_ms": args.duration}
     elif action == "long-press":
         shell(adb, serial, ["input", "swipe", str(args.x), str(args.y), str(args.x), str(args.y), str(args.duration)])
-        return {"serial": serial, "action": action, "point": [args.x, args.y], "duration_ms": args.duration}
+        return {"target": serial, "action": action, "point": [args.x, args.y], "duration_ms": args.duration}
     elif action == "type-text":
         shell(adb, serial, ["input", "text", shell_quote(args.text.replace(" ", "%s"))])
-        return {"serial": serial, "action": action, "characters": len(args.text)}
+        return {"target": serial, "action": action, "characters": len(args.text)}
     elif action in {"press-key", "home", "back"}:
         key = args.key if action == "press-key" else action
         shell(adb, serial, ["input", "keyevent", str(KEY_MAP[key])])
-        return {"serial": serial, "action": action, "key": key}
+        return {"target": serial, "action": action, "key": key}
     elif action == "launch-app":
         package = resolve_package(adb, serial, args.name)
         if not PACKAGE_RE.fullmatch(package):
@@ -463,7 +468,7 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
             shell(adb, serial, ["am", "force-stop", package])
         shell(adb, serial, ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"])
         return {
-            "serial": serial, "action": action, "package": package,
+            "target": serial, "action": action, "package": package,
             "force_restarted": bool(args.force_restart),
         }
     elif action == "force-stop-app":
@@ -471,13 +476,13 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         if not PACKAGE_RE.fullmatch(package):
             raise ControlError("resolved package name is invalid")
         shell(adb, serial, ["am", "force-stop", package])
-        return {"serial": serial, "action": action, "package": package}
+        return {"target": serial, "action": action, "package": package}
     elif action == "open-url":
         parsed = urlsplit(args.url)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
             raise ControlError("URL must be an absolute http:// or https:// URL")
         shell(adb, serial, ["am", "start", "-a", "android.intent.action.VIEW", "-d", shell_quote(args.url)])
-        return {"serial": serial, "action": action, "url": args.url}
+        return {"target": serial, "action": action, "url": args.url}
 
 
 def build_parser() -> argparse.ArgumentParser:

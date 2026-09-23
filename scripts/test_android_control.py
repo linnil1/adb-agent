@@ -55,7 +55,8 @@ class AndroidControlTests(unittest.TestCase):
             "127.0.0.1:5555 device product:p model:Pixel_8 device:shiba transport_id:1\n"
         )
         result = android.parse_devices(output)
-        self.assertEqual(result[0]["serial"], "127.0.0.1:5555")
+        self.assertEqual(result[0]["target"], "127.0.0.1:5555")
+        self.assertNotIn("serial", result[0])
         self.assertEqual(result[0]["model"], "Pixel_8")
 
     def test_parse_packages(self):
@@ -99,7 +100,7 @@ class AndroidControlTests(unittest.TestCase):
             '<node text="" content-desc="More" class="android.widget.Button" '
             'clickable="true" selected="false" scrollable="false" enabled="true" '
             'checked="false" focusable="true" bounds="[0,0][40,40]"/>'
-            '<node text="" content-desc="Transit 2.0&#10;Tab 1 of 2" '
+            '<node text="" content-desc="Transit Pass&#10;Tab 1 of 2" '
             'class="android.view.View" clickable="true" selected="true" '
             'scrollable="false" enabled="true" checked="true" focusable="true" '
             'bounds="[0,40][100,80]"/>'
@@ -112,27 +113,27 @@ class AndroidControlTests(unittest.TestCase):
         elements = android.parse_ui_xml(xml)
 
         self.assertEqual([item["label"] for item in elements], [
-            "More", "Transit 2.0\nTab 1 of 2", "RecyclerView",
+            "More", "Transit Pass\nTab 1 of 2", "RecyclerView",
         ])
-        self.assertEqual(elements[1]["content_description"], "Transit 2.0\nTab 1 of 2")
-        self.assertTrue(elements[1]["selected"])
-        self.assertTrue(elements[1]["enabled"])
-        self.assertTrue(elements[1]["checked"])
-        self.assertTrue(elements[1]["focusable"])
-        self.assertTrue(elements[2]["scrollable"])
-        self.assertFalse(elements[2]["clickable"])
-        self.assertFalse(elements[2]["checked"])
-        self.assertFalse(elements[2]["focusable"])
+        self.assertEqual(elements[1]["description"], "Transit Pass\nTab 1 of 2")
+        self.assertEqual(elements[1]["states"], [
+            "clickable", "selected", "enabled", "checked", "focusable",
+        ])
+        self.assertEqual(elements[2]["states"], ["scrollable", "enabled"])
+        self.assertNotIn("content_description", elements[1])
+        self.assertNotIn("clickable", elements[1])
 
     def test_describe_ui_supports_json_and_original_xml(self):
         xml = '<hierarchy><node text="OK" clickable="true" bounds="[0,0][10,20]"/></hierarchy>'
         parsed = android.describe_ui("device-1", xml, "json")
+        self.assertEqual(parsed["target"], "device-1")
+        self.assertNotIn("serial", parsed)
         self.assertEqual(parsed["format"], "json")
         self.assertEqual(parsed["elements"][0]["center"], [5, 10])
 
         original = android.describe_ui("device-1", xml, "original")
         self.assertEqual(original, {
-            "serial": "device-1", "format": "original", "xml": xml,
+            "target": "device-1", "format": "original", "xml": xml,
         })
 
     def test_truncated_xml_keeps_complete_nodes(self):

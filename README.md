@@ -21,7 +21,9 @@ python3 scripts/android_control.py --action describe-screen --format json
 python3 scripts/android_control.py --action describe-screen --format original
 ```
 
-Parsed elements retain decoded accessibility descriptions and the `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable` states. This keeps unlabeled selected tabs and scrollable containers available to automation.
+Parsed elements expose decoded accessibility text as `description` and collect active accessibility flags in a concise `states` list, for example `["clickable", "selected", "enabled"]`. This keeps unlabeled selected tabs and scrollable containers available to automation.
+
+JSON results use `target` consistently for the ADB device identifier, including entries returned by `list-targets`.
 
 ## Streamable HTTP MCP
 

@@ -48,6 +48,8 @@ Loading the viewer never runs an ADB action. Only an explicit `screenshot` tool 
 
 Target selection is shared by CLI, MCP, and dashboard calls. One ready target is selected silently. With multiple ready targets, a remembered target set less than one hour ago is used if it is still ready; otherwise the operation warns and refuses to guess. Passing `--target` to an ordinary action affects only that call and does not update the remembered target. `set-default-target` validates that its target is currently ready, then replaces the prior default. State is kept in the user's local state directory; `ANDROID_CONTROL_STATE_FILE` may override the state-file path for isolated environments.
 
+Public JSON results consistently identify the selected device with `target`; `list-targets` entries also use `target`. `serial` is only an internal ADB implementation term.
+
 Action-specific schema:
 
 | Action | Required arguments | Optional arguments |
@@ -92,7 +94,7 @@ python3 scripts/android_control.py --action status --target 127.0.0.1:5555
 python3 scripts/android_control.py --mcp
 ```
 
-The script emits JSON on success and concise errors on stderr. `list-packages` refreshes and returns installed package names. `current-focus` reports the focused component, package, and fully qualified activity from `dumpsys window`. `force-stop-app` resolves exact names or unambiguous fragments before calling `am force-stop`. `launch-app --force-restart` performs that force-stop before launching the resolved package; MCP exposes the same behavior as `force_restart: true`. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning labels, decoded text and content descriptions, bounds, centers, classes, packages, and the `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable` states. Scrollable or selected containers are retained even when they have no label. `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or content descriptions over unlabeled clickable nodes.
+The script emits JSON on success and concise errors on stderr. `list-packages` refreshes and returns installed package names. `current-focus` reports the focused component, package, and fully qualified activity from `dumpsys window`. `force-stop-app` resolves exact names or unambiguous fragments before calling `am force-stop`. `launch-app --force-restart` performs that force-stop before launching the resolved package; MCP exposes the same behavior as `force_restart: true`. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning `label`, `text`, decoded `description`, bounds, centers, classes, packages, and a `states` list containing each active value from `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable`. Scrollable or selected containers are retained even when they have no label. `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or descriptions over unlabeled clickable nodes.
 
 ## ADB discovery
 

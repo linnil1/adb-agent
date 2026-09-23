@@ -62,7 +62,7 @@
   <header>
     <h1>Android Device Viewer</h1>
     <input v-model.trim="target" list="target-list" placeholder="Optional target">
-    <datalist id="target-list"><option v-for="item in targets" :value="item.serial">{{ item.model || item.serial }}</option></datalist>
+    <datalist id="target-list"><option v-for="item in targets" :value="item.target">{{ item.model || item.target }}</option></datalist>
     <button @click="invokeNamed('screenshot')" :disabled="busy">Screenshot</button>
   </header>
 
