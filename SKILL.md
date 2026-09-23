@@ -1,6 +1,6 @@
 ---
 name: android-device-control
-description: Inspect and operate an authorized Android phone or emulator through ADB, directly or through Streamable HTTP MCP. Use for checking status, taking screenshots, reading the UI hierarchy, tapping, swiping, typing, pressing keys, launching apps, or opening web URLs. Do not use for bypassing device security, anti-detection, account farming, or devices the user does not own or administer.
+description: Inspect and operate an authorized Android phone or emulator through ADB, directly or through Streamable HTTP MCP. Use for checking status, packages, focused activities, screenshots, UI hierarchy, input, navigation, app launch or force-stop, and web URLs. Do not use for bypassing device security, anti-detection, account farming, or devices the user does not own or administer.
 ---
 
 # Android Device Control
@@ -11,7 +11,7 @@ Use `scripts/android_control.py` as the automation tool. It is a dependency-free
 
 1. Run `python3 scripts/android_control.py --action list-targets`.
 2. If one ready device exists, omit `--target`. If several exist, pass `--target TARGET` for one call, or explicitly remember one for an hour with `--action set-default-target --target TARGET`.
-3. Read state with `status`, `describe-screen`, or `screenshot` before coordinate actions.
+3. Read state with `status`, `current-focus`, `describe-screen`, or `screenshot` before actions.
 4. Use the `center` coordinates returned by `describe-screen` directly with `tap`, `swipe`, or `long-press`.
 5. Inspect the screen again after navigation or another state-changing action.
 
@@ -55,6 +55,8 @@ Action-specific schema:
 | `list-targets` | none | none |
 | `set-default-target` | `--target TARGET` | none |
 | `status` | none | none |
+| `list-packages` | none | none |
+| `current-focus` | none | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`) |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
 | `tap` | `--x INT --y INT` | none |
@@ -64,7 +66,8 @@ Action-specific schema:
 | `press-key` | `--key home\|back\|enter\|recents` | none |
 | `home` | none | none |
 | `back` | none | none |
-| `launch-app` | `--name PACKAGE_OR_FRAGMENT` | none |
+| `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` |
+| `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none |
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
 
 Coordinates and durations must be non-negative integers. Unknown or irrelevant action arguments are rejected.
@@ -73,6 +76,8 @@ Coordinates and durations must be non-negative integers. Unknown or irrelevant a
 
 ```bash
 python3 scripts/android_control.py --action status
+python3 scripts/android_control.py --action list-packages
+python3 scripts/android_control.py --action current-focus
 python3 scripts/android_control.py --action set-default-target --target 127.0.0.1:5555
 python3 scripts/android_control.py --action screenshot --output /tmp/android-screen.png
 python3 scripts/android_control.py --action describe-screen
@@ -81,11 +86,13 @@ python3 scripts/android_control.py --action tap --x 540 --y 260
 python3 scripts/android_control.py --action swipe --x1 540 --y1 1800 --x2 540 --y2 500 --duration 300
 python3 scripts/android_control.py --action type-text --text "hello world"
 python3 scripts/android_control.py --action launch-app --name com.android.settings
+python3 scripts/android_control.py --action launch-app --name com.example.transit --force-restart
+python3 scripts/android_control.py --action force-stop-app --name com.example.transit
 python3 scripts/android_control.py --action status --target 127.0.0.1:5555
 python3 scripts/android_control.py --mcp
 ```
 
-The script emits JSON on success and concise errors on stderr. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning labels, decoded text and content descriptions, bounds, centers, classes, packages, and the `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable` states. Scrollable or selected containers are retained even when they have no label. `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or content descriptions over unlabeled clickable nodes.
+The script emits JSON on success and concise errors on stderr. `list-packages` refreshes and returns installed package names. `current-focus` reports the focused component, package, and fully qualified activity from `dumpsys window`. `force-stop-app` resolves exact names or unambiguous fragments before calling `am force-stop`. `launch-app --force-restart` performs that force-stop before launching the resolved package; MCP exposes the same behavior as `force_restart: true`. `screenshot` saves a signature-validated PNG and reports its absolute path. `describe-screen` defaults to parsed `json`, returning labels, decoded text and content descriptions, bounds, centers, classes, packages, and the `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable` states. Scrollable or selected containers are retained even when they have no label. `--format original` instead preserves the raw `uiautomator` XML in the `xml` field. The MCP `describe_screen` tool exposes the same `format` enum. Prefer visible text or content descriptions over unlabeled clickable nodes.
 
 ## ADB discovery
 

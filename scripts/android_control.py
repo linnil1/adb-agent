@@ -23,20 +23,26 @@ from urllib.parse import urlsplit
 
 
 ACTIONS = (
-    "list-targets", "set-default-target", "status", "screenshot", "describe-screen", "tap", "swipe",
-    "long-press", "type-text", "press-key", "home", "back", "launch-app",
-    "open-url",
+    "list-targets", "set-default-target", "status", "list-packages", "current-focus",
+    "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
+    "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
 )
 ACTION_FIELDS = {
-    "list-targets": set(), "set-default-target": set(), "status": set(), "screenshot": {"output"},
+    "list-targets": set(), "set-default-target": set(), "status": set(),
+    "list-packages": set(), "current-focus": set(), "screenshot": {"output"},
     "describe-screen": {"format"}, "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
     "press-key": {"key"}, "home": set(), "back": set(),
-    "launch-app": {"name"}, "open-url": {"url"},
+    "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
+    "open-url": {"url"},
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
+COMPONENT_RE = re.compile(
+    r"(?P<component>(?P<package>[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)/"
+    r"(?P<activity>\.?[A-Za-z0-9_.$]+))"
+)
 BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 KEY_MAP = {"home": 3, "back": 4, "enter": 66, "recents": 187}
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -316,14 +322,37 @@ def dump_ui(adb: Adb, serial: str) -> str:
     return adb.run(["exec-out", "cat", remote], serial=serial).decode("utf-8", "replace")
 
 
-def packages(adb: Adb, serial: str) -> list[str]:
+def parse_packages(output: str) -> list[str]:
+    return [line[8:].strip() for line in output.splitlines() if line.startswith("package:")]
+
+
+def packages(adb: Adb, serial: str, *, refresh: bool = False) -> list[str]:
     cached = _package_cache.get(serial)
-    if cached and time.monotonic() - cached[0] < 300:
+    if not refresh and cached and time.monotonic() - cached[0] < 300:
         return cached[1]
     output = shell(adb, serial, ["pm", "list", "packages"]).decode("utf-8", "replace")
-    result = [line[8:].strip() for line in output.splitlines() if line.startswith("package:")]
+    result = parse_packages(output)
     _package_cache[serial] = (time.monotonic(), result)
     return result
+
+
+def parse_current_focus(output: str) -> dict[str, str] | None:
+    for source in ("mCurrentFocus", "mFocusedApp"):
+        for line in output.splitlines():
+            if source not in line:
+                continue
+            match = COMPONENT_RE.search(line)
+            if not match:
+                continue
+            package = match.group("package")
+            activity = match.group("activity")
+            return {
+                "component": match.group("component"),
+                "package": package,
+                "activity": package + activity if activity.startswith(".") else activity,
+                "source": source,
+            }
+    return None
 
 
 def resolve_package(adb: Adb, serial: str, query: str) -> str:
@@ -354,13 +383,14 @@ def validate_action_args(args: argparse.Namespace) -> None:
         "type-text": ("text",),
         "press-key": ("key",),
         "launch-app": ("name",),
+        "force-stop-app": ("name",),
         "open-url": ("url",),
     }.get(args.action, ())
     if args.action == "set-default-target":
         require(args.target, "--target")
     for field in required:
         require(getattr(args, field), "--" + field.replace("_", "-"))
-    optional_fields = {"output", "format", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
+    optional_fields = {"output", "format", "force_restart", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
     extras = [field for field in optional_fields - ACTION_FIELDS[args.action] if getattr(args, field) is not None]
     if extras:
         flags = ", ".join("--" + field.replace("_", "-") for field in sorted(extras))
@@ -390,6 +420,15 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         except ControlError:
             pass
         return {"serial": serial, "state": adb.run(["get-state"], serial=serial).decode().strip(), "properties": props, "battery": battery}
+    elif action == "list-packages":
+        installed = packages(adb, serial, refresh=True)
+        return {"serial": serial, "packages": installed, "count": len(installed)}
+    elif action == "current-focus":
+        output = shell(adb, serial, ["dumpsys", "window"]).decode("utf-8", "replace")
+        focused = parse_current_focus(output)
+        if not focused:
+            raise ControlError("focused activity not found in dumpsys window")
+        return {"serial": serial, **focused}
     elif action == "screenshot":
         png = adb.run(["exec-out", "screencap", "-p"], serial=serial, timeout=60)
         if not png.startswith(PNG_MAGIC):
@@ -420,7 +459,18 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         package = resolve_package(adb, serial, args.name)
         if not PACKAGE_RE.fullmatch(package):
             raise ControlError("resolved package name is invalid")
+        if args.force_restart:
+            shell(adb, serial, ["am", "force-stop", package])
         shell(adb, serial, ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"])
+        return {
+            "serial": serial, "action": action, "package": package,
+            "force_restarted": bool(args.force_restart),
+        }
+    elif action == "force-stop-app":
+        package = resolve_package(adb, serial, args.name)
+        if not PACKAGE_RE.fullmatch(package):
+            raise ControlError("resolved package name is invalid")
+        shell(adb, serial, ["am", "force-stop", package])
         return {"serial": serial, "action": action, "package": package}
     elif action == "open-url":
         parsed = urlsplit(args.url)
@@ -442,6 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, help="MCP bind port (default: 8000)")
     parser.add_argument("--output")
     parser.add_argument("--format", choices=("original", "json"))
+    parser.add_argument("--force-restart", action="store_true", default=None)
     parser.add_argument("--x", type=int)
     parser.add_argument("--y", type=int)
     parser.add_argument("--x1", type=int)
@@ -481,7 +532,10 @@ def action_args(action: str, *, adb_path: str | None = None, timeout: float = DE
     if adb_path:
         argv += ["--adb", adb_path]
     for name, value in values.items():
-        if value is not None:
+        if isinstance(value, bool):
+            if value:
+                argv.append("--" + name.replace("_", "-"))
+        elif value is not None:
             argv += ["--" + name.replace("_", "-"), str(value)]
     return build_parser().parse_args(argv)
 
@@ -574,6 +628,16 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Return device state, identity, Android version, and battery details."""
         return call("status", target=target)  # type: ignore[return-value]
 
+    @server.tool(name="list_packages")
+    def list_packages_tool(target: str | None = None) -> dict:
+        """List package names currently installed on the device."""
+        return call("list-packages", target=target)  # type: ignore[return-value]
+
+    @server.tool(name="current_focus")
+    def current_focus_tool(target: str | None = None) -> dict:
+        """Return the package and activity currently focused by Android."""
+        return call("current-focus", target=target)  # type: ignore[return-value]
+
     @server.tool(name="screenshot")
     def screenshot_tool(target: str | None = None):
         """Capture the current device screen as a PNG image."""
@@ -645,9 +709,20 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return call("back", target=target)  # type: ignore[return-value]
 
     @server.tool(name="launch_app")
-    def launch_app_tool(name: str, target: str | None = None) -> dict:
-        """Launch an installed app by exact package or package-name fragment."""
-        return call("launch-app", name=name, target=target)  # type: ignore[return-value]
+    def launch_app_tool(
+        name: str,
+        force_restart: bool = False,
+        target: str | None = None,
+    ) -> dict:
+        """Launch an installed app, optionally force-stopping it first."""
+        return call(
+            "launch-app", name=name, force_restart=force_restart, target=target,
+        )  # type: ignore[return-value]
+
+    @server.tool(name="force_stop_app")
+    def force_stop_app_tool(name: str, target: str | None = None) -> dict:
+        """Force-stop an installed app by exact package or package-name fragment."""
+        return call("force-stop-app", name=name, target=target)  # type: ignore[return-value]
 
     @server.tool(name="open_url")
     def open_url_tool(url: str, target: str | None = None) -> dict:

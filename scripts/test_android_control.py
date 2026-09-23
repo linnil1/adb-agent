@@ -22,6 +22,7 @@ SPEC.loader.exec_module(android)
 
 class AndroidControlTests(unittest.TestCase):
     def setUp(self):
+        android._package_cache.clear()
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.state_path = Path(self.temporary_directory.name) / "state.json"
         self.state_override = patch.dict(
@@ -56,6 +57,31 @@ class AndroidControlTests(unittest.TestCase):
         result = android.parse_devices(output)
         self.assertEqual(result[0]["serial"], "127.0.0.1:5555")
         self.assertEqual(result[0]["model"], "Pixel_8")
+
+    def test_parse_packages(self):
+        output = "package:com.android.settings\nnoise\npackage:com.example.transit\n"
+        self.assertEqual(android.parse_packages(output), [
+            "com.android.settings", "com.example.transit",
+        ])
+
+    def test_parse_current_focus_prefers_current_window(self):
+        output = (
+            "  mFocusedApp=ActivityRecord{123 u0 old.example/.OldActivity t1}\n"
+            "  mCurrentFocus=Window{456 u0 com.example.transit/.MainActivity}\n"
+        )
+        self.assertEqual(android.parse_current_focus(output), {
+            "component": "com.example.transit/.MainActivity",
+            "package": "com.example.transit",
+            "activity": "com.example.transit.MainActivity",
+            "source": "mCurrentFocus",
+        })
+
+    def test_parse_current_focus_falls_back_to_focused_app(self):
+        output = "mCurrentFocus=null\nmFocusedApp=ActivityRecord{abc u0 com.example/com.example.Home t2}\n"
+        focused = android.parse_current_focus(output)
+        self.assertEqual(focused["package"], "com.example")
+        self.assertEqual(focused["activity"], "com.example.Home")
+        self.assertEqual(focused["source"], "mFocusedApp")
 
     def test_parse_ui_xml_and_entities(self):
         xml = (
@@ -129,13 +155,78 @@ class AndroidControlTests(unittest.TestCase):
             "--action", "describe-screen", "--format", "original",
         ])
         android.validate_action_args(describe)
+        force_stop = android.build_parser().parse_args([
+            "--action", "force-stop-app", "--name", "com.example.transit",
+        ])
+        android.validate_action_args(force_stop)
+        launch_restart = android.build_parser().parse_args([
+            "--action", "launch-app", "--name", "com.example.transit",
+            "--force-restart",
+        ])
+        self.assertTrue(launch_restart.force_restart)
+        android.validate_action_args(launch_restart)
         wrong_format_action = android.build_parser().parse_args([
             "--action", "status", "--format", "json",
         ])
         with self.assertRaises(android.ControlError):
             android.validate_action_args(wrong_format_action)
+        wrong_restart_action = android.build_parser().parse_args([
+            "--action", "status", "--force-restart",
+        ])
+        with self.assertRaises(android.ControlError):
+            android.validate_action_args(wrong_restart_action)
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             android.build_parser().parse_args(["--action", "status", "--serial", "device-1"])
+
+    def test_force_stop_resolves_and_uses_argument_array(self):
+        calls = []
+
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                calls.append((args, kwargs))
+                if args == ["devices", "-l"]:
+                    return b"List of devices attached\ndevice-1 device\n"
+                if args == ["shell", "pm", "list", "packages"]:
+                    return b"package:com.example.transit\n"
+                if args == ["shell", "am", "force-stop", "com.example.transit"]:
+                    return b""
+                raise AssertionError(args)
+
+        args = android.build_parser().parse_args([
+            "--action", "force-stop-app", "--name", "transit",
+        ])
+        result = android.device_action(args, FakeAdb())
+        self.assertEqual(result["package"], "com.example.transit")
+        self.assertEqual(calls[-1][0], [
+            "shell", "am", "force-stop", "com.example.transit",
+        ])
+
+    def test_launch_force_restart_stops_then_launches(self):
+        calls = []
+
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                calls.append((args, kwargs))
+                if args == ["devices", "-l"]:
+                    return b"List of devices attached\ndevice-1 device\n"
+                if args == ["shell", "pm", "list", "packages"]:
+                    return b"package:com.example.transit\n"
+                if args in (
+                    ["shell", "am", "force-stop", "com.example.transit"],
+                    ["shell", "monkey", "-p", "com.example.transit", "-c", "android.intent.category.LAUNCHER", "1"],
+                ):
+                    return b""
+                raise AssertionError(args)
+
+        args = android.action_args(
+            "launch-app", name="transit", force_restart=True,
+        )
+        result = android.device_action(args, FakeAdb())
+        self.assertTrue(result["force_restarted"])
+        self.assertEqual([call[0] for call in calls[-2:]], [
+            ["shell", "am", "force-stop", "com.example.transit"],
+            ["shell", "monkey", "-p", "com.example.transit", "-c", "android.intent.category.LAUNCHER", "1"],
+        ])
 
     def test_mcp_is_an_alternative_mode(self):
         args = android.build_parser().parse_args(["--mcp", "--port", "9000"])

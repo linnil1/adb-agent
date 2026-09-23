@@ -4,7 +4,11 @@ A Codex skill and dependency-free Python CLI for inspecting and controlling an a
 
 ```bash
 python3 scripts/android_control.py --action status
+python3 scripts/android_control.py --action list-packages
+python3 scripts/android_control.py --action current-focus
 python3 scripts/android_control.py --action tap --x 540 --y 260
+python3 scripts/android_control.py --action launch-app --name com.example.transit --force-restart
+python3 scripts/android_control.py --action force-stop-app --name com.example.transit
 python3 scripts/android_control.py --action set-default-target --target TARGET
 ```
 
