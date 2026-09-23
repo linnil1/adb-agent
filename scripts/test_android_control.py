@@ -25,8 +25,12 @@ class AndroidControlTests(unittest.TestCase):
         android._package_cache.clear()
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.state_path = Path(self.temporary_directory.name) / "state.json"
+        self.server_path = Path(self.temporary_directory.name) / "mcp-server.json"
         self.state_override = patch.dict(
-            os.environ, {android.STATE_FILE_ENV: str(self.state_path)}, clear=False
+            os.environ, {
+                android.STATE_FILE_ENV: str(self.state_path),
+                android.SERVER_FILE_ENV: str(self.server_path),
+            }, clear=False
         )
         self.state_override.start()
 
@@ -240,6 +244,65 @@ class AndroidControlTests(unittest.TestCase):
         self.assertTrue(args.mcp)
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             android.build_parser().parse_args(["--mcp", "--action", "status"])
+
+    def test_server_discovery_requires_matching_identity_and_pid(self):
+        url = "http://127.0.0.1:9123"
+        android.write_server_file(url)
+        valid = io.BytesIO(json.dumps({
+            "name": android.SERVER_NAME,
+            "api_version": android.SERVER_API_VERSION,
+            "pid": os.getpid(),
+        }).encode())
+        with patch.object(android.urlrequest, "urlopen", return_value=valid):
+            self.assertEqual(android.discover_server(), url)
+
+        android.write_server_file(url)
+        wrong = io.BytesIO(json.dumps({
+            "name": "different-server",
+            "api_version": android.SERVER_API_VERSION,
+            "pid": os.getpid(),
+        }).encode())
+        with patch.object(android.urlrequest, "urlopen", return_value=wrong):
+            self.assertIsNone(android.discover_server())
+        self.assertFalse(self.server_path.exists())
+
+    def test_execute_via_server_returns_structured_result(self):
+        response = io.BytesIO(json.dumps({
+            "ok": True,
+            "result": {
+                "structuredContent": {
+                    "target": "device-1", "state": "device",
+                },
+            },
+        }).encode())
+        args = android.build_parser().parse_args(["--action", "status"])
+        with patch.object(android.urlrequest, "urlopen", return_value=response) as request:
+            result = android.execute_via_server(args, "http://127.0.0.1:8000")
+        self.assertEqual(result["target"], "device-1")
+        sent = json.loads(request.call_args.args[0].data)
+        self.assertEqual(sent, {"name": "status", "arguments": {}})
+
+    def test_execute_via_server_downloads_screenshot(self):
+        call = io.BytesIO(json.dumps({
+            "ok": True,
+            "result": {"content": [{"type": "image", "cachedForViewer": True}]},
+            "viewer": {"target": "device-1", "revision": 1},
+        }).encode())
+        png = android.PNG_MAGIC + b"test"
+        output = Path(self.temporary_directory.name) / "screen.png"
+        args = android.build_parser().parse_args([
+            "--action", "screenshot", "--output", str(output),
+        ])
+        with patch.object(
+            android.urlrequest, "urlopen", side_effect=[call, io.BytesIO(png)]
+        ) as urlopen:
+            result = android.execute_via_server(args, "http://127.0.0.1:8000")
+        self.assertEqual(result["target"], "device-1")
+        self.assertEqual(output.read_bytes(), png)
+        self.assertEqual(
+            urlopen.call_args_list[1].args[0],
+            "http://127.0.0.1:8000/api/viewer/screenshot?revision=1",
+        )
 
     def test_set_default_target_requires_explicit_ready_target(self):
         args = android.build_parser().parse_args(["--action", "set-default-target"])

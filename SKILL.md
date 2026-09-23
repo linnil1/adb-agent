@@ -35,6 +35,7 @@ Common arguments:
 | `--target` | string | no | ADB target for this call; required by `set-default-target` |
 | `--adb` | path | no | Explicit adb executable |
 | `--timeout` | positive number | no | Timeout in seconds; default `30` |
+| `--direct` | flag | no | Bypass a discovered local MCP server and call ADB directly |
 
 To serve the same actions as MCP tools over Streamable HTTP, use `--mcp` instead of `--action`:
 
@@ -47,6 +48,8 @@ MCP mode defaults to `127.0.0.1:8000` with endpoint `/mcp` and requires the pack
 The same listener serves a lightweight Vue viewer at `/`. It requires no Node.js build step, obtains the registered tools and their JSON input schemas from the MCP server, and invokes the same tool handlers as MCP clients. It provides in-memory history, crossfades new screenshots, highlights new success or failure entries, and animates target-matching tap, swipe, long-press, and `describe_screen` accessibility bounds over the captured screenshot.
 
 Loading the viewer never runs an ADB action. Only an explicit `screenshot` tool call from MCP or the dashboard captures a new PNG. The server caches the latest image in memory and pushes a notification to open viewers; their browser event stream is only a dashboard update channel and does not add an MCP SSE transport.
+
+While MCP mode is running, it publishes a user-private discovery file containing its PID and local HTTP URL. Ordinary CLI/skill actions verify the PID and the server's `/api/info` name, API version, and PID before routing through its registered tool handler. This keeps dashboard history and animations synchronized even when an agent starts from the CLI. Missing, stale, or mismatched discovery falls back to direct ADB; once a verified server receives a call, connection failure is reported without a direct retry. `--direct` bypasses discovery, and an explicit `--adb` also remains direct.
 
 Target selection is shared by CLI, MCP, and dashboard calls. One ready target is selected silently. With multiple ready targets, a remembered target set less than one hour ago is used if it is still ready; otherwise the operation warns and refuses to guess. Passing `--target` to an ordinary action affects only that call and does not update the remembered target. `set-default-target` validates that its target is currently ready, then replaces the prior default. State is kept in the user's local state directory; `ANDROID_CONTROL_STATE_FILE` may override the state-file path for isolated environments.
 

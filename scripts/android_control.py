@@ -19,6 +19,8 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from urllib.parse import urlsplit
 
 
@@ -49,6 +51,9 @@ PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_TARGET_TTL = 60 * 60
 STATE_FILE_ENV = "ANDROID_CONTROL_STATE_FILE"
+SERVER_FILE_ENV = "ANDROID_CONTROL_SERVER_FILE"
+SERVER_NAME = "android-device-control"
+SERVER_API_VERSION = 1
 _package_cache: dict[str, tuple[float, list[str]]] = {}
 
 
@@ -168,6 +173,47 @@ def state_file() -> Path:
         return Path(override).expanduser()
     state_root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     return state_root / "android-device-control" / "default-target.json"
+
+
+def server_file() -> Path:
+    override = os.environ.get(SERVER_FILE_ENV)
+    if override:
+        return Path(override).expanduser()
+    return state_file().with_name("mcp-server.json")
+
+
+def advertised_server_url(host: str, port: int) -> str:
+    advertised = "127.0.0.1" if host in {"0.0.0.0", "::", "localhost"} else host
+    if ":" in advertised and not advertised.startswith("["):
+        advertised = f"[{advertised}]"
+    return f"http://{advertised}:{port}"
+
+
+def write_server_file(url: str, pid: int | None = None) -> None:
+    path = server_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    process_id = os.getpid() if pid is None else pid
+    temporary = path.with_name(path.name + f".{process_id}.tmp")
+    temporary.write_text(json.dumps({
+        "name": SERVER_NAME,
+        "api_version": SERVER_API_VERSION,
+        "pid": process_id,
+        "url": url,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
+def clear_server_file(pid: int | None = None) -> None:
+    expected = os.getpid() if pid is None else pid
+    path = server_file()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("pid") == expected:
+            path.unlink()
+    except (OSError, AttributeError, json.JSONDecodeError):
+        pass
 
 
 def read_default_target(now: float | None = None) -> str | None:
@@ -503,6 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--host", help="MCP bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, help="MCP bind port (default: 8000)")
+    parser.add_argument("--direct", action="store_true", help="bypass a discovered local MCP server")
     parser.add_argument("--output")
     parser.add_argument("--format", choices=("original", "json"))
     parser.add_argument("--force-restart", action="store_true", default=None)
@@ -520,7 +567,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def execute(args: argparse.Namespace) -> object:
+def prepare_action(args: argparse.Namespace) -> None:
     if args.timeout <= 0:
         raise ControlError("--timeout must be positive")
     for field in ("x", "y", "x1", "y1", "x2", "y2"):
@@ -534,10 +581,136 @@ def execute(args: argparse.Namespace) -> object:
         args.duration = 1000 if args.action == "long-press" else 300
     if args.action == "screenshot" and args.output is None:
         args.output = "android-screen.png"
+
+
+def execute(args: argparse.Namespace) -> object:
+    prepare_action(args)
     adb = Adb(resolve_adb(args.adb), args.timeout)
     if args.action == "list-targets":
         return list_targets(adb)
     return device_action(args, adb)
+
+
+def read_json_response(response) -> dict[str, object]:
+    try:
+        value = json.loads(response.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ControlError("local MCP server returned invalid JSON") from error
+    if not isinstance(value, dict):
+        raise ControlError("local MCP server returned an invalid response")
+    return value
+
+
+def verify_server(url: str, pid: int, timeout: float = 0.5) -> bool:
+    try:
+        with urlrequest.urlopen(url + "/api/info", timeout=timeout) as response:
+            value = read_json_response(response)
+    except (OSError, urlerror.URLError, ControlError):
+        return False
+    return (
+        value.get("name") == SERVER_NAME
+        and value.get("api_version") == SERVER_API_VERSION
+        and value.get("pid") == pid
+    )
+
+
+def discover_server() -> str | None:
+    path = server_file()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        pid = value["pid"]
+        url = value["url"]
+        if (
+            value.get("name") != SERVER_NAME
+            or value.get("api_version") != SERVER_API_VERSION
+            or not isinstance(pid, int)
+            or pid <= 0
+            or not isinstance(url, str)
+            or urlsplit(url).scheme != "http"
+        ):
+            raise ValueError
+        os.kill(pid, 0)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    if verify_server(url, pid):
+        return url.rstrip("/")
+    clear_server_file(pid)
+    return None
+
+
+def tool_name_for_action(action: str) -> str:
+    return {"home": "press_home", "back": "press_back"}.get(
+        action, action.replace("-", "_")
+    )
+
+
+def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
+    prepare_action(args)
+    arguments: dict[str, object] = {}
+    for field in ACTION_FIELDS[args.action]:
+        if field == "output":
+            continue
+        value = getattr(args, field)
+        if value is not None:
+            arguments[field] = value
+    if args.target:
+        arguments["target"] = args.target
+    payload = json.dumps({
+        "name": tool_name_for_action(args.action),
+        "arguments": arguments,
+    }).encode("utf-8")
+    request = urlrequest.Request(
+        server_url + "/api/tools/call",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(request, timeout=max(args.timeout, 1)) as response:
+            body = read_json_response(response)
+    except urlerror.HTTPError as error:
+        try:
+            detail = read_json_response(error).get("error")
+        except ControlError:
+            detail = None
+        raise ControlError(str(detail or f"local MCP server returned HTTP {error.code}")) from None
+    except (OSError, urlerror.URLError) as error:
+        raise ControlError(
+            "verified local MCP server became unavailable; action was not retried"
+        ) from error
+    if body.get("ok") is not True:
+        raise ControlError(str(body.get("error") or "local MCP tool call failed"))
+    if args.action == "screenshot":
+        viewer = body.get("viewer")
+        target = viewer.get("target") if isinstance(viewer, dict) else None
+        revision = viewer.get("revision") if isinstance(viewer, dict) else None
+        if not isinstance(revision, int):
+            raise ControlError("local MCP server omitted the screenshot revision")
+        screenshot_url = server_url + f"/api/viewer/screenshot?revision={revision}"
+        try:
+            with urlrequest.urlopen(screenshot_url, timeout=max(args.timeout, 1)) as response:
+                png = response.read()
+        except (OSError, urlerror.URLError) as error:
+            raise ControlError("screenshot completed but cached PNG could not be downloaded") from error
+        if not png.startswith(PNG_MAGIC):
+            raise ControlError("local MCP server returned an invalid screenshot")
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(png)
+        return {"target": target, "path": str(output), "bytes": len(png)}
+    result = body.get("result")
+    if not isinstance(result, dict):
+        raise ControlError("local MCP server omitted the tool result")
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        return structured["result"]
+    if structured is not None:
+        return structured
+    raise ControlError("local MCP server omitted structured tool output")
 
 
 def action_args(action: str, *, adb_path: str | None = None, timeout: float = DEFAULT_TIMEOUT, **values: object) -> argparse.Namespace:
@@ -574,7 +747,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     latest_screenshot: dict[str, object] = {}
     latest_description: dict[str, object] = {}
     server = MCPServer(
-        "android-device-control",
+        SERVER_NAME,
         instructions="Inspect and control an authorized Android device over ADB.",
     )
 
@@ -767,8 +940,16 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     async def dashboard(_request: Request) -> Response:
         return FileResponse(web_root / "index.html", media_type="text/html")
 
+    @server.custom_route("/api/info", methods=["GET"])
+    async def server_info(_request: Request) -> Response:
+        return JSONResponse({
+            "name": SERVER_NAME,
+            "api_version": SERVER_API_VERSION,
+            "pid": os.getpid(),
+        })
+
     @server.custom_route("/api/viewer/screenshot", methods=["GET"])
-    async def dashboard_screenshot(_request: Request) -> Response:
+    async def dashboard_screenshot(request: Request) -> Response:
         with viewer_lock:
             png = latest_screenshot.get("png")
             revision = latest_screenshot.get("revision")
@@ -776,6 +957,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             return JSONResponse(
                 {"ok": False, "error": "no screenshot has been captured"},
                 status_code=404,
+            )
+        requested_revision = request.query_params.get("revision")
+        if requested_revision is not None and requested_revision != str(revision):
+            return JSONResponse(
+                {"ok": False, "error": "screenshot revision is no longer available"},
+                status_code=409,
             )
         return Response(
             png,
@@ -862,22 +1049,34 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         try:
             result = await server.call_tool(payload["name"], arguments)
             body = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+            has_image = False
             for content in body.get("content", []):
                 if content.get("type") == "image":
+                    has_image = True
                     content.pop("data", None)
                     content["cachedForViewer"] = True
-            return JSONResponse({"ok": True, "result": body})
+            response: dict[str, object] = {"ok": True, "result": body}
+            if has_image:
+                with viewer_lock:
+                    response["viewer"] = {
+                        key: value for key, value in latest_screenshot.items() if key != "png"
+                    }
+            return JSONResponse(response)
         except ToolError as error:
             return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
 
-    server.run(transport="streamable-http", host=host, port=port)
+    write_server_file(advertised_server_url(host, port))
+    try:
+        server.run(transport="streamable-http", host=host, port=port)
+    finally:
+        clear_server_file()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.mcp:
         action_fields = set().union(*ACTION_FIELDS.values())
-        if args.target or any(getattr(args, field) is not None for field in action_fields):
+        if args.direct or args.target or any(getattr(args, field) is not None for field in action_fields):
             raise ControlError("action arguments cannot be combined with --mcp")
         host = args.host or "127.0.0.1"
         port = args.port or 8000
@@ -890,7 +1089,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.host is not None or args.port is not None:
             raise ControlError("--host and --port require --mcp")
-        emit(execute(args))
+        discovered = None if args.direct or args.adb else discover_server()
+        emit(execute_via_server(args, discovered) if discovered else execute(args))
     return 0
 
 
