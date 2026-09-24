@@ -5,7 +5,7 @@ description: Inspect and operate an authorized Android phone or emulator through
 
 # Android Device Control
 
-Use `scripts/android_control.py` for supported operations. It accepts named arguments and emits JSON on success.
+Use `scripts/android_control.py` for supported operations. It accepts named arguments. Successful actions emit JSON and identify devices as `target`; errors go to stderr.
 
 ## Safety
 
@@ -16,7 +16,7 @@ Preserve the current app session during ordinary automation. Do not relaunch or 
 ## Workflow
 
 1. Run `python3 scripts/android_control.py --action list-targets`.
-2. If one ready device exists, omit `--target`. If several exist, use `--target TARGET` for one call or explicitly remember one for an hour with `set-default-target`.
+2. If one ready device exists, omit `--target`. If several exist, use `--target TARGET` for that call. Use `set-default-target` to remember a ready target for one hour; ordinary `--target` calls never change that default.
 3. Inspect the current state with `status`, `current-focus`, `screenshot`, or `describe-screen` as appropriate.
 4. Use the `center` coordinates from `describe-screen` for `tap`, `swipe`, or `long-press`.
 5. Inspect the result after navigation or another state-changing action.
@@ -25,62 +25,44 @@ Stop rather than guess when the intended target or consequential UI control is a
 
 ## CLI schema
 
-Every action uses:
+Run an action with:
 
 ```bash
 python3 scripts/android_control.py --action ACTION [--target TARGET] [action arguments]
 ```
 
-Common arguments:
+Global action options:
 
-| Argument | Type | Required | Meaning |
-|---|---|---:|---|
-| `--action` | enum | yes | One action from the table below |
-| `--target` | string | no | Target for this call; required by `set-default-target` |
-| `--adb` | path | no | Explicit ADB executable; also bypasses MCP discovery |
-| `--timeout` | positive number | no | Timeout in seconds; default `30` |
-| `--direct` | flag | no | Bypass a discovered local MCP server |
+| Argument | Type | Meaning |
+|---|---|---|
+| `--target TARGET` | string | Select the device for this call. |
+| `--adb PATH` | path | Explicit ADB executable; also bypasses MCP discovery. |
+| `--timeout SECONDS` | positive number | Timeout in seconds; default `30`. |
+| `--direct` | flag | Bypass a discovered local MCP server. |
 
 Action arguments:
 
-| Action | Required arguments | Optional arguments |
-|---|---|---|
-| `list-targets` | none | none |
-| `set-default-target` | `--target TARGET` | none |
-| `status` | none | none |
-| `list-packages` | none | none |
-| `current-focus` | none | none |
-| `screenshot` | none | `--output PATH` (default `android-screen.png`) |
-| `describe-screen` | none | `--format json\|original` (default `json`) |
-| `tap` | `--x INT --y INT` | none |
-| `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` ms (default `300`) |
-| `long-press` | `--x INT --y INT` | `--duration INT` ms (default `1000`) |
-| `type-text` | `--text STRING` | none |
-| `press-key` | `--key home\|back\|enter\|recents` | none |
-| `home` | none | none |
-| `back` | none | none |
-| `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` |
-| `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none |
-| `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
+| Action | Required arguments | Optional arguments | Summary |
+|---|---|---|---|
+| `list-targets` | none | none | List connected devices and their states. |
+| `set-default-target` | `--target TARGET` | none | Remember one ready target for one hour. |
+| `status` | none | none | Report device, Android, and battery status. |
+| `list-packages` | none | none | List installed packages. |
+| `current-focus` | none | none | Report the focused activity. |
+| `screenshot` | none | `--output PATH` (default `android-screen.png`) | Save a validated PNG screenshot. |
+| `describe-screen` | none | `--format json\|original` (default `json`) | Return accessibility elements or raw UI XML. |
+| `tap` | `--x INT --y INT` | none | Tap one coordinate. |
+| `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` ms (default `300`) | Swipe between two coordinates. |
+| `long-press` | `--x INT --y INT` | `--duration INT` ms (default `1000`) | Hold one coordinate. |
+| `type-text` | `--text STRING` | none | Enter text. |
+| `press-key` | `--key home\|back\|enter\|recents` | none | Send a named Android key. |
+| `home` | none | none | Navigate home. |
+| `back` | none | none | Navigate back. |
+| `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` | Launch an installed app. |
+| `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none | Force-stop an installed app. |
+| `open-url` | `--url HTTP_OR_HTTPS_URL` | none | Open a web URL. |
 
 Coordinates and durations must be non-negative integers. Do not pass arguments unrelated to the selected action.
-
-Representative calls:
-
-```bash
-python3 scripts/android_control.py --action status
-python3 scripts/android_control.py --action screenshot --output /tmp/android-screen.png
-python3 scripts/android_control.py --action describe-screen
-python3 scripts/android_control.py --action tap --x 540 --y 260
-python3 scripts/android_control.py --action launch-app --name com.android.settings
-python3 scripts/android_control.py --action set-default-target --target TARGET
-```
-
-## Target selection
-
-One ready target is selected automatically. With multiple ready targets, a remembered target set less than one hour ago is used only if it remains ready; otherwise specify `--target` or run `set-default-target`. Passing `--target` to another action does not change the remembered default.
-
-Results identify devices with `target`. Do not expose the internal ADB term `serial` as a public result field.
 
 ## Screen descriptions
 
@@ -95,6 +77,11 @@ Start the same actions as MCP tools over Streamable HTTP with:
 ```bash
 python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
 ```
+
+| Option | Meaning |
+|---|---|
+| `--host HOST` | Bind host; default `127.0.0.1`. |
+| `--port PORT` | Bind port; default `8000`. |
 
 MCP mode requires `requirements-mcp.txt` and defaults to `127.0.0.1:8000/mcp`. Ordinary CLI calls automatically use a verified local server when one is discoverable, keeping its viewer synchronized. Use `--direct` when direct ADB execution is specifically required. If a verified server accepts a request and then fails, report the failure; do not retry a mutating action directly.
 

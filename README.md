@@ -1,29 +1,34 @@
-# Android Device Control Skill
+# Android Device Control
 
-A Codex skill and dependency-free Python CLI for inspecting and controlling an authorized Android phone or emulator over ADB. It replaces an MCP server with an ordinary named-argument command:
+A Codex skill and Python CLI for inspecting and controlling an authorized Android phone or emulator over ADB. Core actions have no third-party Python dependencies, use named arguments, and return JSON:
 
 ```bash
-python3 scripts/android_control.py --action status
-python3 scripts/android_control.py --action list-packages
-python3 scripts/android_control.py --action current-focus
-python3 scripts/android_control.py --action tap --x 540 --y 260
-python3 scripts/android_control.py --action launch-app --name com.example.transit --force-restart
-python3 scripts/android_control.py --action force-stop-app --name com.example.transit
-python3 scripts/android_control.py --action set-default-target --target TARGET
+python3 scripts/android_control.py --action ACTION [--target TARGET] [action arguments]
 ```
 
 See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safety boundaries.
 
-`describe-screen` returns parsed JSON by default and can preserve the original `uiautomator` XML when requested:
+## Actions
 
-```bash
-python3 scripts/android_control.py --action describe-screen --format json
-python3 scripts/android_control.py --action describe-screen --format original
-```
-
-Parsed elements expose decoded accessibility text as `description` and collect active accessibility flags in a concise `states` list, for example `["clickable", "selected", "enabled"]`. This keeps unlabeled selected tabs and scrollable containers available to automation.
-
-JSON results use `target` consistently for the ADB device identifier, including entries returned by `list-targets`.
+| Action | Summary |
+|---|---|
+| `list-targets` | List connected ADB devices and their states. |
+| `set-default-target` | Remember one ready target for one hour. |
+| `status` | Report device state, model, Android version, and battery information. |
+| `list-packages` | List installed application packages. |
+| `current-focus` | Report the activity currently holding window focus. |
+| `screenshot` | Capture the display to a validated PNG file. |
+| `describe-screen` | Return parsed accessibility elements or the original UI XML. |
+| `tap` | Tap one screen coordinate. |
+| `swipe` | Swipe between two coordinates. |
+| `long-press` | Hold one screen coordinate. |
+| `type-text` | Enter text through Android input. |
+| `press-key` | Send Home, Back, Enter, or Recents. |
+| `home` | Navigate to the Android home screen. |
+| `back` | Navigate back. |
+| `launch-app` | Launch an installed package, optionally forcing a restart. |
+| `force-stop-app` | Force-stop an installed package. |
+| `open-url` | Open an HTTP or HTTPS URL on the device. |
 
 ## Streamable HTTP MCP
 
@@ -34,21 +39,48 @@ python3 -m pip install -r requirements-mcp.txt
 python3 scripts/android_control.py --mcp
 ```
 
-The endpoint is `http://127.0.0.1:8000/mcp` by default. Override the listener with `--host` and `--port`. This project supports Streamable HTTP only, not the superseded SSE transport.
+Default endpoints:
 
-MCP mode writes a user-private discovery file with its PID and local URL. Normal CLI calls verify that `/api/info` identifies the expected server and then use its registered tool handlers, allowing the dashboard to observe actions started by local skill/CLI users. Missing or invalid discovery falls back to direct ADB. Use `--direct` to bypass discovery explicitly; using `--adb` also stays direct.
+- MCP: `http://127.0.0.1:8000/mcp` (Streamable HTTP only)
+- Dashboard: `http://127.0.0.1:8000/`
+- Override the listener with `--host` and `--port`.
 
-The same server provides a build-free Vue viewer at `http://127.0.0.1:8000/`. It discovers every registered MCP tool and its input schema, can invoke those same registered handlers, and shows in-memory command history. Target-matching tap, swipe, and long-press calls from any MCP client animate over the cached screenshot. `describe_screen` animates labeled accessibility bounds, screenshot replacements crossfade, and new history entries highlight success or failure. Vue loads from a CDN; Node.js is not required.
+Execution pipeline:
 
-Opening the viewer does not run an ADB action. A screenshot is captured only when an MCP client or a user in the dashboard invokes the `screenshot` tool. The server caches that image in memory and notifies open viewers, which then load the cached PNG. The small browser event stream used for these notifications is not an alternate MCP transport; MCP remains Streamable HTTP only.
+```text
+MCP client ───── Streamable HTTP /mcp ─┐
+Local CLI ────── verified server call ──┼─→ registered tool ─→ ADB
+Vue dashboard ─ schema-driven call ─────┘          │
+                                                   └─→ history + viewer events
+```
 
-When exactly one target is ready, it is selected automatically. With multiple ready targets, either pass `--target` for that call or use `set_default_target` to remember a validated target for one hour. All MCP tools, including `list_targets` and `set_default_target`, are available through the dashboard's schema-driven tool form. Ordinary `--target` use never changes the remembered default.
+Local CLI discovery:
+
+```text
+private discovery file ─→ verify PID + /api/info
+                          ├─ valid ─────→ use MCP tool handler
+                          └─ unavailable→ use ADB directly
+```
+
+Use `--direct` or an explicit `--adb` path to bypass discovery.
+
+Screenshot and visualization pipeline:
+
+```text
+explicit screenshot action ─→ ADB capture ─→ in-memory cache ─→ viewer event
+                                                              └─→ browser loads PNG
+
+tap / swipe / long-press ─→ viewer event ─→ animation over cached screenshot
+describe_screen ──────────→ viewer event ─→ accessibility-bound animation
+```
+
+Opening the dashboard never triggers an ADB action. It loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas, and displays command history. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP.
 
 ## Attribution
 
 This project is inspired by [benasbarciauskas/androir-mcp](https://github.com/benasbarciauskas/androir-mcp), an Apache-2.0-licensed TypeScript MCP server. This implementation provides a local Python CLI, Streamable HTTP MCP server, and build-free dashboard.
 
-## Test
+## Tests
 
 ```bash
 python3 -m unittest scripts/test_android_control.py
