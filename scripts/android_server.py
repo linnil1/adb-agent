@@ -93,7 +93,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             raise ControlError("screenshot response is not a valid PNG")
         return selected, png
 
-    def cache_screenshot(target: str, png: bytes) -> int:
+    def cache_screenshot(target: str, png: bytes, *, interactive: bool = False) -> int:
         nonlocal screenshot_revision
         with viewer_lock:
             screenshot_revision += 1
@@ -105,7 +105,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 "png": png,
             }
-        publish("screenshot", revision=revision, target=target)
+        publish("screenshot", revision=revision, target=target, interactive=interactive)
         return revision
 
     def cache_description(target: str, elements: list[dict[str, object]]) -> None:
@@ -205,10 +205,13 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.tool(name="press_key")
     def press_key_tool(
-        key: Literal["home", "back", "enter", "recents"],
+        key: Literal[
+            "home", "back", "up", "down", "left", "right", "tab", "enter",
+            "delete", "recents",
+        ],
         target: str | None = None,
     ) -> dict[str, object]:
-        """Press home, back, enter, or recents."""
+        """Press a navigation, editing, enter, home, back, or recents key."""
         return call("press-key", key=key, target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_home")
@@ -254,29 +257,31 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             "pid": os.getpid(),
         })
 
-    @server.custom_route("/api/viewer/screenshot", methods=["GET"])
+    @server.custom_route("/api/viewer/screenshot", methods=["GET", "POST"])
     async def dashboard_screenshot(request: Request) -> Response:
+        if request.method == "POST":
+            try:
+                payload = await request.json()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
+            target = payload.get("target") if isinstance(payload, dict) else None
+            if not isinstance(target, str) or not target:
+                return JSONResponse({"ok": False, "error": "target is required"}, status_code=400)
+            try:
+                selected, png = await asyncio.to_thread(capture_png, target)
+                revision = cache_screenshot(selected, png, interactive=True)
+                return JSONResponse({"ok": True, "target": selected, "revision": revision})
+            except ControlError as error:
+                return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+
         requested_target = request.query_params.get("target")
         requested_revision = request.query_params.get("revision")
+        if not requested_target or requested_revision is None:
+            return JSONResponse(
+                {"ok": False, "error": "target and revision are required"}, status_code=400,
+            )
         with viewer_lock:
-            screenshot = latest_screenshots.get(requested_target) if requested_target else None
-            if screenshot is None and requested_target is None and requested_revision is not None:
-                screenshot = next(
-                    (
-                        item for item in latest_screenshots.values()
-                        if str(item.get("revision")) == requested_revision
-                    ),
-                    None,
-                )
-            if (
-                screenshot is None
-                and requested_target is None
-                and requested_revision is None
-                and latest_screenshots
-            ):
-                screenshot = max(
-                    latest_screenshots.values(), key=lambda item: int(item["revision"])
-                )
+            screenshot = latest_screenshots.get(requested_target)
             png = screenshot.get("png") if screenshot else None
             revision = screenshot.get("revision") if screenshot else None
         if not isinstance(png, bytes):

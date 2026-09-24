@@ -23,7 +23,7 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `swipe` | Swipe between two coordinates. |
 | `long-press` | Hold one screen coordinate. |
 | `type-text` | Enter text through Android input. |
-| `press-key` | Send Home, Back, Enter, or Recents. |
+| `press-key` | Send navigation, editing, Enter, Home, Back, or Recents keys. |
 | `home` | Navigate to the Android home screen. |
 | `back` | Navigate back. |
 | `launch-app` | Launch an installed package, optionally forcing a restart. |
@@ -72,9 +72,10 @@ explicit screenshot action ─→ ADB capture ─→ per-target cache ─→ vie
 
 tap / swipe / long-press ─→ viewer event ─→ animation over cached screenshot
 describe_screen ──────────→ viewer event ─→ accessibility-bound animation
+interactive mode ─────────→ 1-second per-target captures + mouse/keyboard input
 ```
 
-Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP.
+Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP.
 
 ## Attribution
 

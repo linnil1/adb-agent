@@ -30,8 +30,13 @@
     .device-workspace { min-width: 0; min-height: calc(100vh - 90px); display: grid; grid-template-columns: minmax(260px, 1fr) minmax(280px, 360px); border: 1px solid #303b4d; border-radius: 14px; overflow: hidden; box-shadow: 0 12px 32px #0005; }
     .viewer { min-height: 0; display: grid; place-items: center; padding: 18px; overflow: auto; background: radial-gradient(circle at 50% 30%, #172131, #090c11 60%); }
     .device-view { min-width: 0; display: grid; justify-items: center; gap: 8px; }
+    .device-heading { width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; }
     .device-name { max-width: 100%; color: #91a0b6; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
+    .interactive-toggle { padding: 5px 8px; font-size: 11px; }
+    .interactive-toggle.active { color: #86efac; border-color: #22c55e; background: #12351f; }
     .phone { position: relative; line-height: 0; max-width: 100%; max-height: calc(100vh - 94px); border: 1px solid #303b4d; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 70px #000a; touch-action: none; user-select: none; }
+    .phone.interactive { border-color: #22c55e; outline: 2px solid #22c55e33; cursor: crosshair; }
+    .phone.interactive:focus { outline-color: #60a5fa; }
     .phone img { display: block; max-width: 100%; max-height: calc(100vh - 94px); object-fit: contain; pointer-events: none; }
     .phone img.screen-enter { animation: screen-in .28s ease-out; }
     .empty { width: min(360px, 80vw); min-height: 540px; padding: 30px; display: grid; place-items: center; text-align: center; line-height: 1.5; color: #8190a5; background: #10151d; }
@@ -63,6 +68,7 @@
     .required { color: #fb7185; }
     .hint, .status { margin-top: 9px; font-size: 12px; color: #8190a5; line-height: 1.45; }
     .status.error { color: #fb7185; }
+    .interactive-help { margin-top: 7px; font-size: 11px; line-height: 1.45; color: #86efac; }
     .result { max-height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 9px 0 0; font-size: 11px; color: #9ba9bc; }
     .history { min-height: 0; overflow: auto; padding: 0; }
     .history h2 { position: sticky; top: 0; margin: 0; padding: 14px; background: #0e1219ee; border-bottom: 1px solid #202733; }
@@ -94,7 +100,7 @@
         <div v-if="loadError" class="device-option error">{{ loadError }}</div>
         <div v-else-if="!targets.length" class="device-option">No devices found</div>
         <label v-for="item in targets" :key="item.target" class="device-option">
-          <input v-model="viewerTargets" type="checkbox" :value="item.target" :disabled="item.state !== 'device'">
+          <input v-model="viewerTargets" type="checkbox" :value="item.target" :disabled="item.state !== 'device'" @change="syncInteractiveTargets">
           <span>{{ item.model || item.target }}<br v-if="item.model"><small v-if="item.model">{{ item.target }}</small></span>
           <span v-if="item.state !== 'device'" class="state">{{ item.state }}</span>
         </label>
@@ -109,9 +115,14 @@
       <section v-for="viewerTarget in viewerTargets" :key="viewerTarget" class="device-workspace">
         <div class="viewer">
           <div class="device-view">
-            <div class="device-name">{{ targetLabel(viewerTarget) }}</div>
-            <div class="phone">
-              <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).revision" :src="screenFor(viewerTarget).url" :class="{'screen-enter': screenFor(viewerTarget).animated}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
+            <div class="device-heading">
+              <div class="device-name">{{ targetLabel(viewerTarget) }}</div>
+              <button type="button" class="interactive-toggle" :class="{active: panels[viewerTarget].interactive}" @click="setInteractive(viewerTarget, !panels[viewerTarget].interactive)">
+                {{ panels[viewerTarget].interactive ? 'Interactive on' : 'Interactive' }}
+              </button>
+            </div>
+            <div class="phone" :class="{interactive: panels[viewerTarget].interactive}" :tabindex="panels[viewerTarget].interactive ? 0 : -1" :aria-label="`Interactive screen for ${targetLabel(viewerTarget)}`" @pointerdown="pointerDown(viewerTarget, $event)" @pointerup="pointerUp(viewerTarget, $event)" @pointercancel="pointerCancel(viewerTarget)" @keydown="interactiveKey(viewerTarget, $event)">
+              <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).imageKey" :src="screenFor(viewerTarget).url" :class="{'screen-enter': screenFor(viewerTarget).animated}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
               <div v-else class="empty">Waiting for a screenshot from this device.</div>
               <svg v-if="screenFor(viewerTarget).ready && screenFor(viewerTarget).descriptionElements.length" :key="screenFor(viewerTarget).descriptionRevision" class="description-layer" :view-box.camel="`0 0 ${screenFor(viewerTarget).width} ${screenFor(viewerTarget).height}`">
                 <g v-for="(item, index) in screenFor(viewerTarget).descriptionElements" :key="index" class="describe-node" :class="{animated: screenFor(viewerTarget).descriptionAnimated, clickable: item.states.includes('clickable'), selected: item.states.includes('selected'), scrollable: item.states.includes('scrollable')}" :style="{animationDelay: Math.min(index, 30) * 25 + 'ms'}">
@@ -146,7 +157,8 @@
               </label>
               <button :disabled="panels[viewerTarget].busy || !selectedToolFor(viewerTarget)">Run {{ panels[viewerTarget].selectedToolName }}</button>
             </form>
-            <div class="status" :class="{error: panels[viewerTarget].error}">{{ panels[viewerTarget].error || panels[viewerTarget].status }}</div>
+            <div class="status" :class="{error: panels[viewerTarget].error || panels[viewerTarget].interactiveError}">{{ panels[viewerTarget].error || panels[viewerTarget].interactiveError || panels[viewerTarget].status }}</div>
+            <div v-if="panels[viewerTarget].interactive" class="interactive-help">Click, drag, or hold the screen. Focus it to type; Enter, Backspace, Escape, Tab, Home, and arrow keys are supported.</div>
             <pre v-if="panels[viewerTarget].resultText" class="result">{{ panels[viewerTarget].resultText }}</pre>
           </section>
 
@@ -175,16 +187,20 @@ createApp({
   data: () => ({
     tools: [], targets: [], panels: {}, refreshBusy: false, loadError: '',
     viewerTargets: [], targetsInitialized: false, screens: {},
-    emptyScreen: {url: '', ready: false, revision: 0, animated: false, width: 1, height: 1, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false, effect: null},
+    emptyScreen: {url: '', ready: false, revision: 0, imageKey: 0, animated: false, width: 1, height: 1, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false, effect: null},
     effectId: 0,
-    history: [], events: null
+    history: [], events: null, interactiveTimers: {}, typingTimers: {}, inputQueues: {}
   }),
   async mounted() {
     await Promise.all([this.loadTools(), this.loadHistory()]);
     await this.loadTargets();
     this.connectEvents();
   },
-  beforeUnmount() { this.events?.close(); },
+  beforeUnmount() {
+    this.events?.close();
+    for (const timer of Object.values(this.interactiveTimers)) clearInterval(timer);
+    for (const timer of Object.values(this.typingTimers)) clearTimeout(timer);
+  },
   methods: {
     numeric(schema) { return schema.type === 'integer' || schema.type === 'number'; },
     async loadTools() {
@@ -212,6 +228,9 @@ createApp({
       this.targets = targets;
       const ready = new Set(targets.filter(item => item.state === 'device').map(item => item.target));
       for (const target of ready) this.ensurePanel(target);
+      for (const target of Object.keys(this.panels)) {
+        if (!ready.has(target)) this.setInteractive(target, false);
+      }
       this.viewerTargets = this.targetsInitialized
         ? this.viewerTargets.filter(target => ready.has(target))
         : [...ready];
@@ -226,7 +245,8 @@ createApp({
       if (this.panels[target]) return this.panels[target];
       this.panels[target] = {
         selectedToolName: this.tools[0]?.name || '', toolArguments: {}, busy: false,
-        status: 'Viewer connected', error: '', resultText: ''
+        status: 'Viewer connected', error: '', resultText: '', interactive: false,
+        interactiveError: '', capturing: false, pointer: null, textBuffer: ''
       };
       this.resetToolArguments(target);
       return this.panels[target];
@@ -258,6 +278,14 @@ createApp({
       if (target && schema.properties?.target && result.target === undefined) result.target = target;
       return result;
     },
+    async jsonResponse(response, context) {
+      const text = await response.text();
+      try { return JSON.parse(text); }
+      catch (_) {
+        const restart = [404, 405].includes(response.status) ? ' Restart the MCP server to load the new viewer routes.' : '';
+        throw new Error(`${context} returned a non-JSON response (HTTP ${response.status}).${restart}`);
+      }
+    },
     async callTool(name, values = {}, target = '') {
       const tool = this.tools.find(item => item.name === name);
       if (!tool) throw new Error(`MCP tool is unavailable: ${name}`);
@@ -265,7 +293,7 @@ createApp({
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name, arguments: this.argumentsFor(tool, values, target)})
       });
-      const body = await response.json();
+      const body = await this.jsonResponse(response, `Tool ${name}`);
       if (!response.ok || !body.ok) throw new Error(body.error || 'Tool call failed');
       return body.result;
     },
@@ -285,6 +313,126 @@ createApp({
       finally { panel.busy = false; }
     },
     historyFor(target) { return this.history.filter(item => item.arguments?.target === target); },
+    syncInteractiveTargets() {
+      for (const target of Object.keys(this.panels)) {
+        if (!this.viewerTargets.includes(target)) this.setInteractive(target, false);
+      }
+    },
+    setInteractive(target, enabled) {
+      const panel = this.panels[target];
+      if (!panel || panel.interactive === enabled) return;
+      panel.interactive = enabled;
+      panel.interactiveError = '';
+      if (enabled) {
+        panel.status = 'Interactive mode active';
+        this.captureInteractive(target);
+        this.interactiveTimers[target] = setInterval(() => this.captureInteractive(target), 1000);
+      } else {
+        clearInterval(this.interactiveTimers[target]);
+        delete this.interactiveTimers[target];
+        clearTimeout(this.typingTimers[target]);
+        delete this.typingTimers[target];
+        panel.textBuffer = '';
+        panel.pointer = null;
+        panel.status = 'Viewer connected';
+      }
+    },
+    async captureInteractive(target) {
+      const panel = this.panels[target];
+      if (!panel?.interactive || panel.capturing) return;
+      panel.capturing = true;
+      try {
+        const response = await fetch('/api/viewer/screenshot', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target})
+        });
+        const body = await this.jsonResponse(response, 'Interactive capture');
+        if (!response.ok || !body.ok) throw new Error(body.error || 'Interactive capture failed');
+        panel.interactiveError = '';
+      } catch (error) {
+        if (error.message.includes('Restart the MCP server')) this.setInteractive(target, false);
+        panel.interactiveError = error.message;
+      }
+      finally { panel.capturing = false; }
+    },
+    screenPoint(event) {
+      const image = event.currentTarget.querySelector('img');
+      if (!image?.naturalWidth || !image.naturalHeight) return null;
+      const rect = image.getBoundingClientRect();
+      const clientX = Math.max(rect.left, Math.min(rect.right, event.clientX));
+      const clientY = Math.max(rect.top, Math.min(rect.bottom, event.clientY));
+      return {
+        x: Math.min(image.naturalWidth - 1, Math.round((clientX - rect.left) * image.naturalWidth / rect.width)),
+        y: Math.min(image.naturalHeight - 1, Math.round((clientY - rect.top) * image.naturalHeight / rect.height)),
+        clientX, clientY
+      };
+    },
+    pointerDown(target, event) {
+      const panel = this.panels[target];
+      if (!panel?.interactive || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      const point = this.screenPoint(event);
+      if (!point) return;
+      event.preventDefault();
+      event.currentTarget.focus();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      panel.pointer = {...point, startedAt: Date.now(), pointerId: event.pointerId};
+    },
+    pointerUp(target, event) {
+      const panel = this.panels[target], start = panel?.pointer;
+      if (!panel?.interactive || !start || start.pointerId !== event.pointerId) return;
+      const end = this.screenPoint(event);
+      panel.pointer = null;
+      if (!end) return;
+      event.preventDefault();
+      const elapsed = Math.max(1, Date.now() - start.startedAt);
+      const movement = Math.hypot(end.clientX - start.clientX, end.clientY - start.clientY);
+      if (elapsed >= 550 && movement < 10) {
+        this.queueInteractiveCall(target, 'long_press', {x: start.x, y: start.y, duration: Math.min(3000, elapsed)});
+      } else if (movement < 8) {
+        this.queueInteractiveCall(target, 'tap', {x: end.x, y: end.y});
+      } else {
+        this.queueInteractiveCall(target, 'swipe', {
+          x1: start.x, y1: start.y, x2: end.x, y2: end.y,
+          duration: Math.max(100, Math.min(3000, elapsed))
+        });
+      }
+    },
+    pointerCancel(target) { if (this.panels[target]) this.panels[target].pointer = null; },
+    interactiveKey(target, event) {
+      const panel = this.panels[target];
+      if (!panel?.interactive || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+      const keys = {
+        Enter: 'enter', Backspace: 'delete', Escape: 'back', Tab: 'tab', Home: 'home',
+        ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'
+      };
+      if (keys[event.key]) {
+        event.preventDefault();
+        this.flushInteractiveText(target);
+        this.queueInteractiveCall(target, 'press_key', {key: keys[event.key]});
+      } else if (event.key.length === 1) {
+        event.preventDefault();
+        panel.textBuffer += event.key;
+        clearTimeout(this.typingTimers[target]);
+        this.typingTimers[target] = setTimeout(() => this.flushInteractiveText(target), 80);
+      }
+    },
+    flushInteractiveText(target) {
+      const panel = this.panels[target];
+      if (!panel?.textBuffer) return;
+      const text = panel.textBuffer;
+      panel.textBuffer = '';
+      clearTimeout(this.typingTimers[target]);
+      delete this.typingTimers[target];
+      this.queueInteractiveCall(target, 'type_text', {text});
+    },
+    queueInteractiveCall(target, name, values) {
+      const panel = this.panels[target];
+      const previous = this.inputQueues[target] || Promise.resolve();
+      this.inputQueues[target] = previous
+        .then(() => this.callTool(name, values, target))
+        .then(() => { panel.interactiveError = ''; })
+        .catch(error => { panel.interactiveError = error.message; });
+    },
     connectEvents() {
       this.events = new EventSource('/api/viewer/events');
       this.events.addEventListener('viewer', event => this.applyViewerEvent(JSON.parse(event.data)));
@@ -294,11 +442,9 @@ createApp({
     },
     applyViewerEvent(event) {
       if (event.type === 'state') {
-        const screenshots = event.screenshots || (event.screenshot?.revision ? [event.screenshot] : []);
-        const descriptions = event.descriptions || (event.description?.elements ? [event.description] : []);
-        for (const screenshot of screenshots) this.showScreenshot(screenshot.revision, screenshot.target, false);
-        for (const description of descriptions) this.showDescription(description, false);
-      } else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, true);
+        for (const screenshot of event.screenshots) this.showScreenshot(screenshot.revision, screenshot.target, false);
+        for (const description of event.descriptions) this.showDescription(description, false);
+      } else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, !event.interactive);
       else if (event.type === 'description') this.showDescription(event, true);
       else if (event.type === 'gesture') this.showGesture(event);
       else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift({...event.entry, _fresh: true});
@@ -327,7 +473,8 @@ createApp({
       if (!target) return;
       const previous = this.screenFor(target);
       this.screens[target] = {
-        ...previous, ready: false, revision, animated: animate,
+        ...previous, ready: animate ? false : previous.ready, revision,
+        imageKey: animate ? revision : previous.imageKey, animated: animate,
         url: `/api/viewer/screenshot?target=${encodeURIComponent(target)}&revision=${encodeURIComponent(revision)}`,
         descriptionElements: [], descriptionAnimated: false, effect: null
       };

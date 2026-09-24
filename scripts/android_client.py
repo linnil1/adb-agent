@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 if __package__:
     from .android_core import (
@@ -119,9 +119,11 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         viewer = body.get("viewer")
         target = viewer.get("target") if isinstance(viewer, dict) else None
         revision = viewer.get("revision") if isinstance(viewer, dict) else None
-        if not isinstance(revision, int):
-            raise ControlError("local MCP server omitted the screenshot revision")
-        screenshot_url = server_url + f"/api/viewer/screenshot?revision={revision}"
+        if not isinstance(target, str) or not isinstance(revision, int):
+            raise ControlError("local MCP server omitted the screenshot target or revision")
+        screenshot_url = server_url + "/api/viewer/screenshot?" + urlencode({
+            "target": target, "revision": revision,
+        })
         try:
             with urlrequest.urlopen(screenshot_url, timeout=max(args.timeout, 1)) as response:
                 png = response.read()

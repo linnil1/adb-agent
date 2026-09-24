@@ -55,7 +55,7 @@ Action arguments:
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` ms (default `300`) | Swipe between two coordinates. |
 | `long-press` | `--x INT --y INT` | `--duration INT` ms (default `1000`) | Hold one coordinate. |
 | `type-text` | `--text STRING` | none | Enter text. |
-| `press-key` | `--key home\|back\|enter\|recents` | none | Send a named Android key. |
+| `press-key` | `--key home\|back\|up\|down\|left\|right\|tab\|enter\|delete\|recents` | none | Send a named Android key. |
 | `home` | none | none | Navigate home. |
 | `back` | none | none | Navigate back. |
 | `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` | Launch an installed app. |

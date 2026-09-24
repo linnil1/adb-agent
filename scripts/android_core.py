@@ -38,14 +38,17 @@ COMPONENT_RE = re.compile(
     r"(?P<activity>\.?[A-Za-z0-9_.$]+))"
 )
 BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
-KEY_MAP = {"home": 3, "back": 4, "enter": 66, "recents": 187}
+KEY_MAP = {
+    "home": 3, "back": 4, "up": 19, "down": 20, "left": 21, "right": 22,
+    "tab": 61, "enter": 66, "delete": 67, "recents": 187,
+}
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_TARGET_TTL = 60 * 60
 STATE_FILE_ENV = "ANDROID_CONTROL_STATE_FILE"
 SERVER_FILE_ENV = "ANDROID_CONTROL_SERVER_FILE"
 SERVER_NAME = "android-device-control"
-SERVER_API_VERSION = 1
+SERVER_API_VERSION = 2
 _package_cache: dict[str, tuple[float, list[str]]] = {}
 
 

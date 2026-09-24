@@ -201,6 +201,26 @@ class AndroidControlTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             android.build_parser().parse_args(["--action", "status", "--serial", "device-1"])
 
+    def test_press_key_supports_interactive_keyboard_keys(self):
+        calls = []
+
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                calls.append((args, kwargs))
+                if args == ["devices", "-l"]:
+                    return b"List of devices attached\ndevice-1 device\n"
+                if args == ["shell", "input", "keyevent", "67"]:
+                    return b""
+                raise AssertionError(args)
+
+        result = android.device_action(
+            android.action_args("press-key", key="delete", target="device-1"),
+            FakeAdb(),
+        )
+
+        self.assertEqual(result["key"], "delete")
+        self.assertEqual(calls[-1][0], ["shell", "input", "keyevent", "67"])
+
     def test_force_stop_resolves_and_uses_argument_array(self):
         calls = []
 
@@ -313,7 +333,7 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(output.read_bytes(), png)
         self.assertEqual(
             urlopen.call_args_list[1].args[0],
-            "http://127.0.0.1:8000/api/viewer/screenshot?revision=1",
+            "http://127.0.0.1:8000/api/viewer/screenshot?target=device-1&revision=1",
         )
 
     def test_set_default_target_requires_explicit_ready_target(self):
