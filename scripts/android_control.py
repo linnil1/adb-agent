@@ -818,22 +818,22 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return call("list-targets")  # type: ignore[return-value]
 
     @server.tool(name="set_default_target")
-    def set_default_target_tool(target: str) -> dict:
+    def set_default_target_tool(target: str) -> dict[str, object]:
         """Remember a connected, ready target as the automatic choice for one hour."""
         return call("set-default-target", target=target)  # type: ignore[return-value]
 
     @server.tool(name="status")
-    def status_tool(target: str | None = None) -> dict:
+    def status_tool(target: str | None = None) -> dict[str, object]:
         """Return device state, identity, Android version, and battery details."""
         return call("status", target=target)  # type: ignore[return-value]
 
     @server.tool(name="list_packages")
-    def list_packages_tool(target: str | None = None) -> dict:
+    def list_packages_tool(target: str | None = None) -> dict[str, object]:
         """List package names currently installed on the device."""
         return call("list-packages", target=target)  # type: ignore[return-value]
 
     @server.tool(name="current_focus")
-    def current_focus_tool(target: str | None = None) -> dict:
+    def current_focus_tool(target: str | None = None) -> dict[str, object]:
         """Return the package and activity currently focused by Android."""
         return call("current-focus", target=target)  # type: ignore[return-value]
 
@@ -853,7 +853,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def describe_screen_tool(
         format: Literal["original", "json"] = "json",
         target: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Return raw uiautomator XML or parsed JSON elements (default)."""
         result = call("describe-screen", format=format, target=target)
         elements = description_elements(result)  # type: ignore[arg-type]
@@ -861,7 +861,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return result  # type: ignore[return-value]
 
     @server.tool(name="tap")
-    def tap_tool(x: int, y: int, target: str | None = None) -> dict:
+    def tap_tool(x: int, y: int, target: str | None = None) -> dict[str, object]:
         """Tap non-negative device-pixel coordinates."""
         result = call("tap", x=x, y=y, target=target)
         publish("gesture", gesture="tap", target=result["target"], x=x, y=y)  # type: ignore[index]
@@ -871,7 +871,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def swipe_tool(
         x1: int, y1: int, x2: int, y2: int,
         duration: int = 300, target: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Swipe between device-pixel coordinates."""
         result = call("swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration=duration, target=target)
         publish(
@@ -883,7 +883,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     @server.tool(name="long_press")
     def long_press_tool(
         x: int, y: int, duration: int = 1000, target: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Long-press device-pixel coordinates."""
         result = call("long-press", x=x, y=y, duration=duration, target=target)
         publish(
@@ -893,7 +893,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return result  # type: ignore[return-value]
 
     @server.tool(name="type_text")
-    def type_text_tool(text: str, target: str | None = None) -> dict:
+    def type_text_tool(text: str, target: str | None = None) -> dict[str, object]:
         """Type text into the focused Android input."""
         return call("type-text", text=text, target=target)  # type: ignore[return-value]
 
@@ -901,17 +901,17 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def press_key_tool(
         key: Literal["home", "back", "enter", "recents"],
         target: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Press home, back, enter, or recents."""
         return call("press-key", key=key, target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_home")
-    def press_home_tool(target: str | None = None) -> dict:
+    def press_home_tool(target: str | None = None) -> dict[str, object]:
         """Press the Android home button."""
         return call("home", target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_back")
-    def press_back_tool(target: str | None = None) -> dict:
+    def press_back_tool(target: str | None = None) -> dict[str, object]:
         """Press the Android back button."""
         return call("back", target=target)  # type: ignore[return-value]
 
@@ -920,19 +920,19 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         name: str,
         force_restart: bool = False,
         target: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Launch an installed app, optionally force-stopping it first."""
         return call(
             "launch-app", name=name, force_restart=force_restart, target=target,
         )  # type: ignore[return-value]
 
     @server.tool(name="force_stop_app")
-    def force_stop_app_tool(name: str, target: str | None = None) -> dict:
+    def force_stop_app_tool(name: str, target: str | None = None) -> dict[str, object]:
         """Force-stop an installed app by exact package or package-name fragment."""
         return call("force-stop-app", name=name, target=target)  # type: ignore[return-value]
 
     @server.tool(name="open_url")
-    def open_url_tool(url: str, target: str | None = None) -> dict:
+    def open_url_tool(url: str, target: str | None = None) -> dict[str, object]:
         """Open an absolute HTTP or HTTPS URL on the device."""
         return call("open-url", url=url, target=target)  # type: ignore[return-value]
 

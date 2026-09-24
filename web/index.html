@@ -87,7 +87,7 @@
       <div class="phone">
         <img v-if="screenUrl" :key="screenRevision" ref="screen" :src="screenUrl" :class="{'screen-enter': screenAnimated}" @load="screenLoaded" @error="screenError">
         <div v-else class="empty">Waiting for an MCP or dashboard screenshot action.</div>
-        <svg v-if="screenReady && descriptionElements.length" :key="descriptionRevision" class="description-layer" :viewBox="`0 0 ${screenWidth} ${screenHeight}`">
+        <svg v-if="screenReady && descriptionElements.length" :key="descriptionRevision" class="description-layer" :view-box.camel="`0 0 ${screenWidth} ${screenHeight}`">
           <g v-for="(item, index) in descriptionElements" :key="index" class="describe-node" :class="{animated: descriptionAnimated, clickable: item.states.includes('clickable'), selected: item.states.includes('selected'), scrollable: item.states.includes('scrollable')}" :style="{animationDelay: Math.min(index, 30) * 25 + 'ms'}">
             <rect :x="item.bounds[0]" :y="item.bounds[1]" :width="item.bounds[2] - item.bounds[0]" :height="item.bounds[3] - item.bounds[1]"></rect>
             <text :x="item.bounds[0] + 5" :y="Math.max(20, item.bounds[1] + 20)">{{ item.label }}</text>
