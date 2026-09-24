@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Offline unit tests for android_control.py."""
 
-import importlib.util
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -13,11 +14,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+from scripts import android_control as android
+
+
 MODULE_PATH = Path(__file__).with_name("android_control.py")
-SPEC = importlib.util.spec_from_file_location("android_control", MODULE_PATH)
-assert SPEC and SPEC.loader
-android = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(android)
 
 
 class AndroidControlTests(unittest.TestCase):
@@ -52,6 +52,18 @@ class AndroidControlTests(unittest.TestCase):
     def test_shell_quote(self):
         self.assertEqual(android.shell_quote("it's"), "'it'\\''s'")
         self.assertEqual(android.shell_quote("a&b"), "'a&b'")
+
+    def test_direct_cli_entrypoint_loads_split_modules(self):
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "--help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--action", result.stdout)
+        self.assertIn("--mcp", result.stdout)
 
     def test_parse_devices(self):
         output = (
