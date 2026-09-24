@@ -29,6 +29,8 @@ else:
 
 def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     try:
+        import anyio
+        import uvicorn
         from mcp.server import MCPServer
         from mcp.server.mcpserver import Image
         from mcp.server.mcpserver.exceptions import ToolError
@@ -408,6 +410,14 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     write_server_file(advertised_server_url(host, port))
     try:
-        server.run(transport="streamable-http", host=host, port=port)
+        app = server.streamable_http_app(host=host)
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=server.settings.log_level.lower(),
+            timeout_graceful_shutdown=1.0,
+        )
+        anyio.run(uvicorn.Server(config).serve)
     finally:
         clear_server_file()
