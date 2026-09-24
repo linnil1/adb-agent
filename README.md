@@ -75,7 +75,11 @@ describe_screen ──────────→ viewer event ─→ accessibil
 interactive mode ─────────→ 1-second per-target captures + mouse/keyboard input
 ```
 
-Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP.
+Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP. On desktop, each device workspace has a maximum height of 900 px, with command history scrolling inside it.
+
+## Dashboard preview
+
+![Android Device Viewer dashboard with phone preview, tools, and command history](docs/android-dashboard-chatgpt.png)
 
 ## Attribution
 
