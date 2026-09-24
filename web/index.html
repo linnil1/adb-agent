@@ -17,9 +17,20 @@
     .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
     header { display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-bottom: 1px solid #202733; background: #0e1219; }
     header h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 650; }
-    header input { width: 220px; }
-    main { min-height: 0; display: grid; grid-template-columns: minmax(320px, 1fr) minmax(310px, 420px); }
+    .device-picker { position: relative; }
+    .device-picker summary { min-width: 180px; padding: 8px 12px; border: 1px solid #2a3342; border-radius: 8px; background: #141a23; cursor: pointer; list-style: none; }
+    .device-picker summary::-webkit-details-marker { display: none; }
+    .device-options { position: absolute; z-index: 10; right: 0; top: calc(100% + 6px); min-width: 270px; padding: 7px; border: 1px solid #2a3342; border-radius: 10px; background: #141a23; box-shadow: 0 16px 40px #0009; }
+    .device-option { display: flex; align-items: center; gap: 8px; padding: 7px; color: #cbd5e1; font-size: 12px; line-height: 1.35; }
+    .device-option input { min-width: auto; margin: 0; padding: 0; }
+    .device-option .state { margin-left: auto; color: #8190a5; }
+    .device-option.error { color: #fb7185; }
+    main { min-height: 0; overflow: auto; }
+    .device-workspaces { min-height: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 650px), 760px)); justify-content: center; align-content: start; gap: 16px; padding: 16px; }
+    .device-workspace { min-width: 0; min-height: calc(100vh - 90px); display: grid; grid-template-columns: minmax(260px, 1fr) minmax(280px, 360px); border: 1px solid #303b4d; border-radius: 14px; overflow: hidden; box-shadow: 0 12px 32px #0005; }
     .viewer { min-height: 0; display: grid; place-items: center; padding: 18px; overflow: auto; background: radial-gradient(circle at 50% 30%, #172131, #090c11 60%); }
+    .device-view { min-width: 0; display: grid; justify-items: center; gap: 8px; }
+    .device-name { max-width: 100%; color: #91a0b6; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
     .phone { position: relative; line-height: 0; max-width: 100%; max-height: calc(100vh - 94px); border: 1px solid #303b4d; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 70px #000a; touch-action: none; user-select: none; }
     .phone img { display: block; max-width: 100%; max-height: calc(100vh - 94px); object-fit: contain; pointer-events: none; }
     .phone img.screen-enter { animation: screen-in .28s ease-out; }
@@ -67,7 +78,7 @@
     @keyframes history-fail { from { background: #ef444448; transform: translateX(10px); } to { background: transparent; transform: none; } }
     @media (max-width: 850px) {
       header { flex-wrap: wrap; } header h1 { width: 100%; }
-      main { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 70vh) auto; }
+      .device-workspace { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 70vh) auto; }
       aside { border-left: 0; border-top: 1px solid #202733; min-height: 600px; }
       .phone, .phone img { max-height: calc(70vh - 36px); }
     }
@@ -77,66 +88,84 @@
 <div id="app" class="app">
   <header>
     <h1>Android Device Viewer</h1>
-    <input v-model.trim="target" list="target-list" placeholder="Optional target">
-    <datalist id="target-list"><option v-for="item in targets" :value="item.target">{{ item.model || item.target }}</option></datalist>
-    <button @click="invokeNamed('screenshot')" :disabled="busy">Screenshot</button>
+    <details class="device-picker">
+      <summary>{{ viewerTargets.length ? `Viewing ${viewerTargets.length} device${viewerTargets.length === 1 ? '' : 's'}` : 'Select devices' }}</summary>
+      <div class="device-options">
+        <div v-if="loadError" class="device-option error">{{ loadError }}</div>
+        <div v-else-if="!targets.length" class="device-option">No devices found</div>
+        <label v-for="item in targets" :key="item.target" class="device-option">
+          <input v-model="viewerTargets" type="checkbox" :value="item.target" :disabled="item.state !== 'device'">
+          <span>{{ item.model || item.target }}<br v-if="item.model"><small v-if="item.model">{{ item.target }}</small></span>
+          <span v-if="item.state !== 'device'" class="state">{{ item.state }}</span>
+        </label>
+      </div>
+    </details>
+    <button @click="refreshTargets" :disabled="refreshBusy" title="Refresh target devices">Refresh</button>
   </header>
 
   <main>
-    <section class="viewer">
-      <div class="phone">
-        <img v-if="screenUrl" :key="screenRevision" ref="screen" :src="screenUrl" :class="{'screen-enter': screenAnimated}" @load="screenLoaded" @error="screenError">
-        <div v-else class="empty">Waiting for an MCP or dashboard screenshot action.</div>
-        <svg v-if="screenReady && descriptionElements.length" :key="descriptionRevision" class="description-layer" :view-box.camel="`0 0 ${screenWidth} ${screenHeight}`">
-          <g v-for="(item, index) in descriptionElements" :key="index" class="describe-node" :class="{animated: descriptionAnimated, clickable: item.states.includes('clickable'), selected: item.states.includes('selected'), scrollable: item.states.includes('scrollable')}" :style="{animationDelay: Math.min(index, 30) * 25 + 'ms'}">
-            <rect :x="item.bounds[0]" :y="item.bounds[1]" :width="item.bounds[2] - item.bounds[0]" :height="item.bounds[3] - item.bounds[1]"></rect>
-            <text :x="item.bounds[0] + 5" :y="Math.max(20, item.bounds[1] + 20)">{{ item.label }}</text>
-          </g>
-        </svg>
-        <div v-if="effect?.type === 'tap'" :key="effect.id" class="tap-pulse" :style="{left: effect.x + '%', top: effect.y + '%'}"></div>
-        <svg v-if="effect?.type === 'swipe'" :key="effect.id" class="swipe-line" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <line :x1="effect.x1" :y1="effect.y1" :x2="effect.x2" :y2="effect.y2" :style="{animationDuration: effect.duration + 'ms, ' + (effect.duration + 250) + 'ms'}"></line>
-        </svg>
-        <div v-if="effect?.type === 'long_press'" :key="effect.id" class="long-press-ring" :style="{left: effect.x + '%', top: effect.y + '%', animationDuration: (effect.duration + 250) + 'ms'}"></div>
-      </div>
-    </section>
-
-    <aside>
-      <section class="panel">
-        <h2>MCP tools</h2>
-        <form class="tool-form" @submit.prevent="invokeSelected">
-          <select v-model="selectedToolName" @change="resetToolArguments">
-            <option v-for="tool in tools" :key="tool.name" :value="tool.name">{{ tool.name }}</option>
-          </select>
-          <div class="hint" v-if="selectedTool">{{ selectedTool.description }}</div>
-          <label v-for="field in toolFields" :key="field.name">
-            <span>{{ field.name }} <span v-if="field.required" class="required">*</span></span>
-            <select v-if="field.schema.enum" v-model="toolArguments[field.name]" :required="field.required">
-              <option v-if="!field.required" value="">Unset</option>
-              <option v-for="choice in field.schema.enum" :key="choice" :value="choice">{{ choice }}</option>
-            </select>
-            <input v-else v-model="toolArguments[field.name]" :type="numeric(field.schema) ? 'number' : 'text'" :required="field.required" :placeholder="field.schema.description || field.schema.title || field.name">
-          </label>
-          <button :disabled="busy || !selectedTool">Run {{ selectedToolName }}</button>
-        </form>
-        <div class="status" :class="{error: error}">{{ error || status }}</div>
-        <pre v-if="resultText" class="result">{{ resultText }}</pre>
-      </section>
-
-      <section class="history">
-        <h2>History</h2>
-        <div v-if="!history.length" class="entry">No commands yet.</div>
-        <div v-for="(item, index) in history" :key="item.time + index" class="entry" :class="{fresh: item._fresh, failed: item._fresh && !item.ok}">
-          <div class="entry-head">
-            <span :class="item.ok ? 'ok' : 'fail'">{{ item.ok ? '●' : '×' }}</span>
-            <span class="action">{{ item.action }}</span>
-            <span class="time">{{ formatTime(item.time) }}</span>
+    <div v-if="!viewerTargets.length" class="viewer"><div class="empty">Select one or more devices to view.</div></div>
+    <div v-else class="device-workspaces">
+      <section v-for="viewerTarget in viewerTargets" :key="viewerTarget" class="device-workspace">
+        <div class="viewer">
+          <div class="device-view">
+            <div class="device-name">{{ targetLabel(viewerTarget) }}</div>
+            <div class="phone">
+              <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).revision" :src="screenFor(viewerTarget).url" :class="{'screen-enter': screenFor(viewerTarget).animated}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
+              <div v-else class="empty">Waiting for a screenshot from this device.</div>
+              <svg v-if="screenFor(viewerTarget).ready && screenFor(viewerTarget).descriptionElements.length" :key="screenFor(viewerTarget).descriptionRevision" class="description-layer" :view-box.camel="`0 0 ${screenFor(viewerTarget).width} ${screenFor(viewerTarget).height}`">
+                <g v-for="(item, index) in screenFor(viewerTarget).descriptionElements" :key="index" class="describe-node" :class="{animated: screenFor(viewerTarget).descriptionAnimated, clickable: item.states.includes('clickable'), selected: item.states.includes('selected'), scrollable: item.states.includes('scrollable')}" :style="{animationDelay: Math.min(index, 30) * 25 + 'ms'}">
+                  <rect :x="item.bounds[0]" :y="item.bounds[1]" :width="item.bounds[2] - item.bounds[0]" :height="item.bounds[3] - item.bounds[1]"></rect>
+                  <text :x="item.bounds[0] + 5" :y="Math.max(20, item.bounds[1] + 20)">{{ item.label }}</text>
+                </g>
+              </svg>
+              <div v-if="screenFor(viewerTarget).effect?.type === 'tap'" :key="screenFor(viewerTarget).effect.id" class="tap-pulse" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%'}"></div>
+              <svg v-if="screenFor(viewerTarget).effect?.type === 'swipe'" :key="screenFor(viewerTarget).effect.id" class="swipe-line" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <line :x1="screenFor(viewerTarget).effect.x1" :y1="screenFor(viewerTarget).effect.y1" :x2="screenFor(viewerTarget).effect.x2" :y2="screenFor(viewerTarget).effect.y2" :style="{animationDuration: screenFor(viewerTarget).effect.duration + 'ms, ' + (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></line>
+              </svg>
+              <div v-if="screenFor(viewerTarget).effect?.type === 'long_press'" :key="screenFor(viewerTarget).effect.id" class="long-press-ring" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%', animationDuration: (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></div>
+            </div>
           </div>
-          <pre v-if="Object.keys(item.arguments || {}).length">{{ JSON.stringify(item.arguments) }}</pre>
-          <pre v-if="item.error">{{ item.error }}</pre>
         </div>
+
+        <aside>
+          <section class="panel">
+            <h2>MCP tools</h2>
+            <form class="tool-form" @submit.prevent="invokeSelected(viewerTarget)">
+              <select v-model="panels[viewerTarget].selectedToolName" @change="resetToolArguments(viewerTarget)">
+                <option v-for="tool in tools" :key="tool.name" :value="tool.name">{{ tool.name }}</option>
+              </select>
+              <div class="hint" v-if="selectedToolFor(viewerTarget)">{{ selectedToolFor(viewerTarget).description }}</div>
+              <label v-for="field in toolFieldsFor(viewerTarget)" :key="field.name">
+                <span>{{ field.name }} <span v-if="field.required" class="required">*</span></span>
+                <select v-if="field.schema.enum" v-model="panels[viewerTarget].toolArguments[field.name]" :required="field.required">
+                  <option v-if="!field.required" value="">Unset</option>
+                  <option v-for="choice in field.schema.enum" :key="choice" :value="choice">{{ choice }}</option>
+                </select>
+                <input v-else v-model="panels[viewerTarget].toolArguments[field.name]" :type="numeric(field.schema) ? 'number' : 'text'" :required="field.required" :placeholder="field.schema.description || field.schema.title || field.name">
+              </label>
+              <button :disabled="panels[viewerTarget].busy || !selectedToolFor(viewerTarget)">Run {{ panels[viewerTarget].selectedToolName }}</button>
+            </form>
+            <div class="status" :class="{error: panels[viewerTarget].error}">{{ panels[viewerTarget].error || panels[viewerTarget].status }}</div>
+            <pre v-if="panels[viewerTarget].resultText" class="result">{{ panels[viewerTarget].resultText }}</pre>
+          </section>
+
+          <section class="history">
+            <h2>History</h2>
+            <div v-if="!historyFor(viewerTarget).length" class="entry">No commands yet.</div>
+            <div v-for="(item, index) in historyFor(viewerTarget)" :key="item.time + index" class="entry" :class="{fresh: item._fresh, failed: item._fresh && !item.ok}">
+              <div class="entry-head">
+                <span :class="item.ok ? 'ok' : 'fail'">{{ item.ok ? '●' : '×' }}</span>
+                <span class="action">{{ item.action }}</span>
+                <span class="time">{{ formatTime(item.time) }}</span>
+              </div>
+              <pre v-if="Object.keys(item.arguments || {}).length">{{ JSON.stringify(item.arguments) }}</pre>
+              <pre v-if="item.error">{{ item.error }}</pre>
+            </div>
+          </section>
+        </aside>
       </section>
-    </aside>
+    </div>
   </main>
 </div>
 
@@ -144,23 +173,15 @@
 const { createApp } = Vue;
 createApp({
   data: () => ({
-    tools: [], selectedToolName: '', toolArguments: {}, targets: [], target: '',
-    screenUrl: '', screenReady: false, screenRevision: 0, screenTarget: '', screenAnimated: false,
-    screenWidth: 1, screenHeight: 1, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false,
-    effect: null, effectId: 0,
-    history: [], busy: false, status: 'Viewer connected', error: '', resultText: '', events: null
+    tools: [], targets: [], panels: {}, refreshBusy: false, loadError: '',
+    viewerTargets: [], targetsInitialized: false, screens: {},
+    emptyScreen: {url: '', ready: false, revision: 0, animated: false, width: 1, height: 1, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false, effect: null},
+    effectId: 0,
+    history: [], events: null
   }),
-  computed: {
-    selectedTool() { return this.tools.find(tool => tool.name === this.selectedToolName); },
-    toolSchema() { return this.selectedTool?.inputSchema || {}; },
-    toolFields() {
-      const required = new Set(this.toolSchema.required || []);
-      return Object.entries(this.toolSchema.properties || {}).filter(([name]) => name !== 'target')
-        .map(([name, schema]) => ({name, schema, required: required.has(name)}));
-    }
-  },
   async mounted() {
     await Promise.all([this.loadTools(), this.loadHistory()]);
+    await this.loadTargets();
     this.connectEvents();
   },
   beforeUnmount() { this.events?.close(); },
@@ -171,101 +192,166 @@ createApp({
         const response = await fetch('/api/tools', {cache: 'no-store'});
         if (!response.ok) throw new Error('Unable to load MCP tools');
         this.tools = (await response.json()).tools || [];
-        this.selectedToolName = this.tools[0]?.name || '';
-        this.resetToolArguments();
-      } catch (error) { this.error = error.message; }
+      } catch (error) { this.loadError = error.message; }
     },
-    resetToolArguments() {
+    async loadTargets() {
+      if (!this.tools.some(tool => tool.name === 'list_targets')) return;
+      try {
+        const result = await this.callTool('list_targets');
+        const targets = result.structuredContent?.result ?? result.structuredContent ?? [];
+        this.updateTargets(Array.isArray(targets) ? targets : []);
+      } catch (error) { this.loadError = error.message; }
+    },
+    async refreshTargets() {
+      this.refreshBusy = true;
+      this.loadError = '';
+      try { await this.loadTargets(); }
+      finally { this.refreshBusy = false; }
+    },
+    updateTargets(targets) {
+      this.targets = targets;
+      const ready = new Set(targets.filter(item => item.state === 'device').map(item => item.target));
+      for (const target of ready) this.ensurePanel(target);
+      this.viewerTargets = this.targetsInitialized
+        ? this.viewerTargets.filter(target => ready.has(target))
+        : [...ready];
+      this.targetsInitialized = true;
+    },
+    targetLabel(target) {
+      const item = this.targets.find(candidate => candidate.target === target);
+      return item?.model ? `${item.model} (${target})` : target;
+    },
+    screenFor(target) { return this.screens[target] || this.emptyScreen; },
+    ensurePanel(target) {
+      if (this.panels[target]) return this.panels[target];
+      this.panels[target] = {
+        selectedToolName: this.tools[0]?.name || '', toolArguments: {}, busy: false,
+        status: 'Viewer connected', error: '', resultText: ''
+      };
+      this.resetToolArguments(target);
+      return this.panels[target];
+    },
+    selectedToolFor(target) {
+      const panel = this.panels[target];
+      return this.tools.find(tool => tool.name === panel?.selectedToolName);
+    },
+    toolFieldsFor(target) {
+      const schema = this.selectedToolFor(target)?.inputSchema || {};
+      const required = new Set(schema.required || []);
+      return Object.entries(schema.properties || {}).filter(([name]) => name !== 'target')
+        .map(([name, fieldSchema]) => ({name, schema: fieldSchema, required: required.has(name)}));
+    },
+    resetToolArguments(target) {
+      const panel = this.panels[target];
+      if (!panel) return;
       const values = {};
-      for (const field of this.toolFields) values[field.name] = field.schema.default ?? '';
-      this.toolArguments = values;
+      for (const field of this.toolFieldsFor(target)) values[field.name] = field.schema.default ?? '';
+      panel.toolArguments = values;
     },
-    argumentsFor(tool, values = {}) {
+    argumentsFor(tool, values = {}, target = '') {
       const schema = tool?.inputSchema || {}, result = {};
       for (const [name, value] of Object.entries(values)) {
         if (value === '' || value === null || value === undefined) continue;
         const type = schema.properties?.[name]?.type;
         result[name] = type === 'integer' || type === 'number' ? Number(value) : value;
       }
-      if (this.target && schema.properties?.target && result.target === undefined) result.target = this.target;
+      if (target && schema.properties?.target && result.target === undefined) result.target = target;
       return result;
     },
-    async callTool(name, values = {}) {
+    async callTool(name, values = {}, target = '') {
       const tool = this.tools.find(item => item.name === name);
       if (!tool) throw new Error(`MCP tool is unavailable: ${name}`);
       const response = await fetch('/api/tools/call', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name, arguments: this.argumentsFor(tool, values)})
+        body: JSON.stringify({name, arguments: this.argumentsFor(tool, values, target)})
       });
       const body = await response.json();
       if (!response.ok || !body.ok) throw new Error(body.error || 'Tool call failed');
       return body.result;
     },
-    async invokeNamed(name, values = {}) {
-      this.busy = true; this.error = ''; this.status = `Running ${name}…`; this.resultText = '';
+    async invokeSelected(target) {
+      const panel = this.panels[target], name = panel.selectedToolName;
+      panel.busy = true; panel.error = ''; panel.status = `Running ${name}…`; panel.resultText = '';
       try {
-        const result = await this.callTool(name, values);
-        this.status = `${name} completed`;
-        this.resultText = JSON.stringify(result.structuredContent ?? result.content ?? result, null, 2);
-        if (name === 'list_targets') this.targets = result.structuredContent?.result || result.structuredContent || [];
+        const result = await this.callTool(name, panel.toolArguments, target);
+        panel.status = `${name} completed`;
+        panel.resultText = JSON.stringify(result.structuredContent ?? result.content ?? result, null, 2);
+        if (name === 'list_targets') {
+          const targets = result.structuredContent?.result ?? result.structuredContent ?? [];
+          this.updateTargets(Array.isArray(targets) ? targets : []);
+        }
         return result;
-      } catch (error) { this.error = error.message; }
-      finally { this.busy = false; }
+      } catch (error) { panel.error = error.message; }
+      finally { panel.busy = false; }
     },
-    async invokeSelected() { await this.invokeNamed(this.selectedToolName, this.toolArguments); },
+    historyFor(target) { return this.history.filter(item => item.arguments?.target === target); },
     connectEvents() {
       this.events = new EventSource('/api/viewer/events');
       this.events.addEventListener('viewer', event => this.applyViewerEvent(JSON.parse(event.data)));
-      this.events.onerror = () => { if (!this.error) this.status = 'Viewer reconnecting…'; };
+      this.events.onerror = () => {
+        for (const panel of Object.values(this.panels)) if (!panel.error) panel.status = 'Viewer reconnecting…';
+      };
     },
     applyViewerEvent(event) {
       if (event.type === 'state') {
-        if (event.screenshot?.revision) this.showScreenshot(event.screenshot.revision, event.screenshot.target, false);
-        if (event.description?.elements) this.showDescription(event.description, false);
+        const screenshots = event.screenshots || (event.screenshot?.revision ? [event.screenshot] : []);
+        const descriptions = event.descriptions || (event.description?.elements ? [event.description] : []);
+        for (const screenshot of screenshots) this.showScreenshot(screenshot.revision, screenshot.target, false);
+        for (const description of descriptions) this.showDescription(description, false);
       } else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, true);
       else if (event.type === 'description') this.showDescription(event, true);
       else if (event.type === 'gesture') this.showGesture(event);
       else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift({...event.entry, _fresh: true});
-      this.status = 'Viewer connected';
+      for (const panel of Object.values(this.panels)) panel.status = 'Viewer connected';
     },
     showGesture(event) {
-      const image = this.$refs.screen;
-      if (!image?.naturalWidth || !image.naturalHeight || event.target !== this.screenTarget) return;
-      const xp = x => Math.max(0, Math.min(100, x * 100 / image.naturalWidth));
-      const yp = y => Math.max(0, Math.min(100, y * 100 / image.naturalHeight));
+      const screen = this.screens[event.target];
+      if (!screen?.ready || !screen.width || !screen.height) return;
+      const xp = x => Math.max(0, Math.min(100, x * 100 / screen.width));
+      const yp = y => Math.max(0, Math.min(100, y * 100 / screen.height));
       const duration = Math.max(250, Math.min(3000, Number(event.duration) || 300));
+      let effect;
       if (event.gesture === 'tap') {
-        this.effect = {type: 'tap', id: ++this.effectId, x: xp(event.x), y: yp(event.y)};
+        effect = {type: 'tap', id: ++this.effectId, x: xp(event.x), y: yp(event.y)};
       } else if (event.gesture === 'swipe') {
-        this.effect = {
+        effect = {
           type: 'swipe', id: ++this.effectId,
           x1: xp(event.x1), y1: yp(event.y1), x2: xp(event.x2), y2: yp(event.y2), duration
         };
       } else if (event.gesture === 'long_press') {
-        this.effect = {type: 'long_press', id: ++this.effectId, x: xp(event.x), y: yp(event.y), duration};
+        effect = {type: 'long_press', id: ++this.effectId, x: xp(event.x), y: yp(event.y), duration};
       }
+      if (effect) this.screens[event.target] = {...screen, effect};
     },
     showScreenshot(revision, target, animate) {
-      this.screenReady = false;
-      this.descriptionElements = [];
-      this.screenRevision = revision;
-      this.screenTarget = target || '';
-      this.screenAnimated = animate;
-      this.screenUrl = `/api/viewer/screenshot?revision=${encodeURIComponent(revision)}`;
+      if (!target) return;
+      const previous = this.screenFor(target);
+      this.screens[target] = {
+        ...previous, ready: false, revision, animated: animate,
+        url: `/api/viewer/screenshot?target=${encodeURIComponent(target)}&revision=${encodeURIComponent(revision)}`,
+        descriptionElements: [], descriptionAnimated: false, effect: null
+      };
     },
     showDescription(description, animate) {
-      if (!this.screenTarget || description.target !== this.screenTarget) return;
-      this.descriptionElements = description.elements || [];
-      this.descriptionAnimated = animate;
-      this.descriptionRevision += 1;
+      if (!description.target) return;
+      const screen = this.screenFor(description.target);
+      this.screens[description.target] = {
+        ...screen,
+        descriptionElements: description.elements || [],
+        descriptionAnimated: animate,
+        descriptionRevision: screen.descriptionRevision + 1
+      };
     },
-    screenLoaded() {
-      const image = this.$refs.screen;
-      this.screenWidth = image?.naturalWidth || 1;
-      this.screenHeight = image?.naturalHeight || 1;
-      this.screenReady = true;
+    screenLoaded(target, event) {
+      const screen = this.screenFor(target), image = event.currentTarget;
+      this.screens[target] = {
+        ...screen, width: image?.naturalWidth || 1, height: image?.naturalHeight || 1, ready: true
+      };
     },
-    screenError() { this.error = 'Unable to load the cached screenshot'; this.screenReady = false; },
+    screenError(target) {
+      if (this.panels[target]) this.panels[target].error = `Unable to load the cached screenshot for ${target}`;
+      this.screens[target] = {...this.screenFor(target), ready: false};
+    },
     async loadHistory() {
       try { const response = await fetch('/api/history', {cache: 'no-store'}); this.history = (await response.json()).history || []; }
       catch (_) {}

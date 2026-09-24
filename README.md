@@ -67,14 +67,14 @@ Use `--direct` or an explicit `--adb` path to bypass discovery.
 Screenshot and visualization pipeline:
 
 ```text
-explicit screenshot action ─→ ADB capture ─→ in-memory cache ─→ viewer event
+explicit screenshot action ─→ ADB capture ─→ per-target cache ─→ viewer event
                                                               └─→ browser loads PNG
 
 tap / swipe / long-press ─→ viewer event ─→ animation over cached screenshot
 describe_screen ──────────→ viewer event ─→ accessibility-bound animation
 ```
 
-Opening the dashboard never triggers an ADB action. It loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas, and displays command history. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP.
+Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP.
 
 ## Attribution
 

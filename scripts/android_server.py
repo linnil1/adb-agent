@@ -45,8 +45,9 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     viewer_lock = threading.Lock()
     viewer_events: deque[dict[str, object]] = deque(maxlen=200)
     viewer_sequence = 0
-    latest_screenshot: dict[str, object] = {}
-    latest_description: dict[str, object] = {}
+    screenshot_revision = 0
+    latest_screenshots: dict[str, dict[str, object]] = {}
+    latest_descriptions: dict[str, dict[str, object]] = {}
     server = MCPServer(
         SERVER_NAME,
         instructions="Inspect and control an authorized Android device over ADB.",
@@ -75,7 +76,10 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def call(action: str, **values: object) -> object:
         try:
             result = execute(action_args(action, adb_path=resolved_adb, timeout=timeout, **values))
-            record(action, values, True)
+            recorded_values = dict(values)
+            if isinstance(result, dict) and isinstance(result.get("target"), str):
+                recorded_values["target"] = result["target"]
+            record(action, recorded_values, True)
             return result
         except ControlError as error:
             record(action, values, False, str(error))
@@ -90,15 +94,17 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return selected, png
 
     def cache_screenshot(target: str, png: bytes) -> int:
+        nonlocal screenshot_revision
         with viewer_lock:
-            revision = int(latest_screenshot.get("revision", 0)) + 1
-            latest_description.clear()
-            latest_screenshot.update({
+            screenshot_revision += 1
+            revision = screenshot_revision
+            latest_descriptions.pop(target, None)
+            latest_screenshots[target] = {
                 "revision": revision,
                 "target": target,
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 "png": png,
-            })
+            }
         publish("screenshot", revision=revision, target=target)
         return revision
 
@@ -109,8 +115,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             "elements": elements,
         }
         with viewer_lock:
-            latest_description.clear()
-            latest_description.update(description)
+            latest_descriptions[target] = description
         publish("description", **description)
 
     @server.tool(name="list_targets")
@@ -144,7 +149,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         try:
             selected, png = capture_png(target)
             cache_screenshot(selected, png)
-            record("screenshot", {"target": target}, True)
+            record("screenshot", {"target": selected}, True)
             return Image(data=png, format="png")
         except ControlError as error:
             record("screenshot", {"target": target}, False, str(error))
@@ -251,15 +256,34 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.custom_route("/api/viewer/screenshot", methods=["GET"])
     async def dashboard_screenshot(request: Request) -> Response:
+        requested_target = request.query_params.get("target")
+        requested_revision = request.query_params.get("revision")
         with viewer_lock:
-            png = latest_screenshot.get("png")
-            revision = latest_screenshot.get("revision")
+            screenshot = latest_screenshots.get(requested_target) if requested_target else None
+            if screenshot is None and requested_target is None and requested_revision is not None:
+                screenshot = next(
+                    (
+                        item for item in latest_screenshots.values()
+                        if str(item.get("revision")) == requested_revision
+                    ),
+                    None,
+                )
+            if (
+                screenshot is None
+                and requested_target is None
+                and requested_revision is None
+                and latest_screenshots
+            ):
+                screenshot = max(
+                    latest_screenshots.values(), key=lambda item: int(item["revision"])
+                )
+            png = screenshot.get("png") if screenshot else None
+            revision = screenshot.get("revision") if screenshot else None
         if not isinstance(png, bytes):
             return JSONResponse(
                 {"ok": False, "error": "no screenshot has been captured"},
                 status_code=404,
             )
-        requested_revision = request.query_params.get("revision")
         if requested_revision is not None and requested_revision != str(revision):
             return JSONResponse(
                 {"ok": False, "error": "screenshot revision is no longer available"},
@@ -291,10 +315,11 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             with viewer_lock:
                 initial = {
                     "type": "state",
-                    "screenshot": {
-                        key: value for key, value in latest_screenshot.items() if key != "png"
-                    },
-                    "description": dict(latest_description),
+                    "screenshots": [
+                        {key: value for key, value in screenshot.items() if key != "png"}
+                        for screenshot in latest_screenshots.values()
+                    ],
+                    "descriptions": list(latest_descriptions.values()),
                 }
             yield "event: viewer\ndata: " + json.dumps(initial, ensure_ascii=False) + "\n\n"
             idle = 0
@@ -359,8 +384,18 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             response: dict[str, object] = {"ok": True, "result": body}
             if has_image:
                 with viewer_lock:
+                    requested_target = arguments.get("target")
+                    screenshot = (
+                        latest_screenshots.get(requested_target)
+                        if isinstance(requested_target, str)
+                        else None
+                    )
+                    if screenshot is None:
+                        screenshot = max(
+                            latest_screenshots.values(), key=lambda item: int(item["revision"])
+                        )
                     response["viewer"] = {
-                        key: value for key, value in latest_screenshot.items() if key != "png"
+                        key: value for key, value in screenshot.items() if key != "png"
                     }
             return JSONResponse(response)
         except ToolError as error:
