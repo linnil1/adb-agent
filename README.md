@@ -85,6 +85,10 @@ Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers
 
 This project is inspired by [benasbarciauskas/androir-mcp](https://github.com/benasbarciauskas/androir-mcp), an Apache-2.0-licensed TypeScript MCP server. This implementation provides a local Python CLI, Streamable HTTP MCP server, and build-free dashboard.
 
+## License
+
+MIT. See [LICENSE](LICENSE).
+
 ## Tests
 
 ```bash
