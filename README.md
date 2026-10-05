@@ -80,6 +80,8 @@ Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers
 
 Without a cached screenshot, `describe_screen` displays a standalone view of accessibility bounds and labels, with the canvas extent estimated from the elements. With a screenshot, the same elements overlay the image.
 
+Each device has **Clear screenshot** and **Clear description** buttons. They remove only that device's selected viewer cache and synchronize open dashboards. Clearing the screenshot stops interactive capture and preserves any description; clearing the description preserves the screenshot. These controls do not modify the phone or command history.
+
 ## Dashboard preview
 
 ![Android Device Viewer dashboard with phone preview, tools, and command history](docs/android-dashboard-chatgpt.png)

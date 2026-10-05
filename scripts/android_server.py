@@ -305,6 +305,25 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             },
         )
 
+    @server.custom_route("/api/viewer/cache", methods=["DELETE"])
+    async def dashboard_clear_cache(request: Request) -> Response:
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
+        target = payload.get("target") if isinstance(payload, dict) else None
+        kind = payload.get("kind") if isinstance(payload, dict) else None
+        if not isinstance(target, str) or not target or kind not in ("screenshot", "description"):
+            return JSONResponse(
+                {"ok": False, "error": "target and kind (screenshot or description) are required"},
+                status_code=400,
+            )
+        with viewer_lock:
+            cache = latest_screenshots if kind == "screenshot" else latest_descriptions
+            cache.pop(target, None)
+        publish("cleared", target=target, kind=kind)
+        return JSONResponse({"ok": True, "target": target, "kind": kind})
+
     @server.custom_route("/api/viewer/events", methods=["GET"])
     async def dashboard_events(request: Request) -> Response:
         requested_after = request.query_params.get("after")

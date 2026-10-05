@@ -139,6 +139,10 @@
               </svg>
               <div v-if="screenFor(viewerTarget).effect?.type === 'long_press'" :key="screenFor(viewerTarget).effect.id" class="long-press-ring" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%', animationDuration: (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></div>
             </div>
+            <div class="toolbar">
+              <button type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'screenshot')">Clear screenshot</button>
+              <button type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'description')">Clear description</button>
+            </div>
           </div>
         </div>
 
@@ -249,7 +253,7 @@ createApp({
       this.panels[target] = {
         selectedToolName: this.tools[0]?.name || '', toolArguments: {}, busy: false,
         status: 'Viewer connected', error: '', resultText: '', interactive: false,
-        interactiveError: '', capturing: false, pointer: null, textBuffer: ''
+        interactiveError: '', capturing: false, clearing: false, pointer: null, textBuffer: ''
       };
       this.resetToolArguments(target);
       return this.panels[target];
@@ -314,6 +318,37 @@ createApp({
         return result;
       } catch (error) { panel.error = error.message; }
       finally { panel.busy = false; }
+    },
+    async clearViewer(target, kind) {
+      const panel = this.panels[target];
+      panel.clearing = true;
+      panel.error = '';
+      if (kind === 'screenshot') this.setInteractive(target, false);
+      try {
+        // Let an already-started interactive capture finish before deleting it.
+        while (kind === 'screenshot' && panel.capturing) await new Promise(resolve => setTimeout(resolve, 50));
+        const response = await fetch('/api/viewer/cache', {
+          method: 'DELETE', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target, kind})
+        });
+        const body = await this.jsonResponse(response, 'Clear viewer');
+        if (!response.ok || !body.ok) throw new Error(body.error || 'Unable to clear viewer');
+        this.clearScreen(target, kind);
+        panel.status = `${kind === 'screenshot' ? 'Screenshot' : 'Description'} cleared`;
+      } catch (error) { panel.error = error.message; }
+      finally { panel.clearing = false; }
+    },
+    clearScreen(target, kind) {
+      const screen = this.screenFor(target);
+      if (kind === 'screenshot') {
+        this.screens[target] = {...this.emptyScreen};
+        this.showDescription({target, elements: screen.descriptionElements}, false);
+      } else {
+        this.screens[target] = {
+          ...screen, descriptionElements: [], descriptionAnimated: false,
+          ready: screen.url ? screen.ready : false, effect: null
+        };
+      }
     },
     historyFor(target) { return this.history.filter(item => item.arguments?.target === target); },
     syncInteractiveTargets() {
@@ -445,10 +480,12 @@ createApp({
     },
     applyViewerEvent(event) {
       if (event.type === 'state') {
+        this.screens = {};
         for (const screenshot of event.screenshots) this.showScreenshot(screenshot.revision, screenshot.target, false);
         for (const description of event.descriptions) this.showDescription(description, false);
       } else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, !event.interactive);
       else if (event.type === 'description') this.showDescription(event, true);
+      else if (event.type === 'cleared') this.clearScreen(event.target, event.kind);
       else if (event.type === 'gesture') this.showGesture(event);
       else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift({...event.entry, _fresh: true});
       for (const panel of Object.values(this.panels)) panel.status = 'Viewer connected';
