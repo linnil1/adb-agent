@@ -39,6 +39,7 @@
     .phone.interactive:focus { outline-color: #60a5fa; }
     .phone img { display: block; max-width: 100%; max-height: min(810px, calc(100dvh - 170px)); object-fit: contain; pointer-events: none; }
     .phone img.screen-enter { animation: screen-in .28s ease-out; }
+    .description-placeholder { width: min(320px, 70vw, calc(min(810px, calc(100dvh - 170px)) * var(--screen-ratio))); aspect-ratio: var(--screen-ratio); background: #10151d; }
     .empty { width: min(360px, 80vw); min-height: 540px; padding: 30px; display: grid; place-items: center; text-align: center; line-height: 1.5; color: #8190a5; background: #10151d; }
     .tap-pulse { position: absolute; width: 34px; height: 34px; margin: -17px; border: 3px solid #60a5fa; border-radius: 50%; animation: pulse .7s ease-out forwards; pointer-events: none; }
     .swipe-line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -87,6 +88,7 @@
       .device-workspace { height: auto; max-height: none; grid-template-columns: 1fr; grid-template-rows: minmax(420px, 70vh) auto; }
       aside { border-left: 0; border-top: 1px solid #202733; min-height: 600px; }
       .phone, .phone img { max-height: calc(70vh - 36px); }
+      .description-placeholder { width: min(320px, 70vw, calc((70vh - 36px) * var(--screen-ratio))); }
     }
   </style>
 </head>
@@ -123,7 +125,8 @@
             </div>
             <div class="phone" :class="{interactive: panels[viewerTarget].interactive}" :tabindex="panels[viewerTarget].interactive ? 0 : -1" :aria-label="`Interactive screen for ${targetLabel(viewerTarget)}`" @pointerdown="pointerDown(viewerTarget, $event)" @pointerup="pointerUp(viewerTarget, $event)" @pointercancel="pointerCancel(viewerTarget)" @keydown="interactiveKey(viewerTarget, $event)">
               <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).imageKey" :src="screenFor(viewerTarget).url" :class="{'screen-enter': screenFor(viewerTarget).animated}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
-              <div v-else class="empty">Waiting for a screenshot from this device.</div>
+              <div v-else-if="screenFor(viewerTarget).descriptionElements.length" class="description-placeholder" :style="{'--screen-ratio': screenFor(viewerTarget).width / screenFor(viewerTarget).height}"></div>
+              <div v-else class="empty">Run describe_screen or screenshot to view this device.</div>
               <svg v-if="screenFor(viewerTarget).ready && screenFor(viewerTarget).descriptionElements.length" :key="screenFor(viewerTarget).descriptionRevision" class="description-layer" :view-box.camel="`0 0 ${screenFor(viewerTarget).width} ${screenFor(viewerTarget).height}`">
                 <g v-for="(item, index) in screenFor(viewerTarget).descriptionElements" :key="index" class="describe-node" :class="{animated: screenFor(viewerTarget).descriptionAnimated, clickable: item.states.includes('clickable'), selected: item.states.includes('selected'), scrollable: item.states.includes('scrollable')}" :style="{animationDelay: Math.min(index, 30) * 25 + 'ms'}">
                   <rect :x="item.bounds[0]" :y="item.bounds[1]" :width="item.bounds[2] - item.bounds[0]" :height="item.bounds[3] - item.bounds[1]"></rect>
@@ -482,9 +485,14 @@ createApp({
     showDescription(description, animate) {
       if (!description.target) return;
       const screen = this.screenFor(description.target);
+      const elements = description.elements || [];
+      // Without a PNG, estimate the canvas extent from accessibility bounds.
+      const width = screen.url ? screen.width : Math.max(1, ...elements.map(item => item.bounds[2]));
+      const height = screen.url ? screen.height : Math.max(1, ...elements.map(item => item.bounds[3]));
       this.screens[description.target] = {
         ...screen,
-        descriptionElements: description.elements || [],
+        width, height, ready: screen.url ? screen.ready : elements.length > 0,
+        descriptionElements: elements,
         descriptionAnimated: animate,
         descriptionRevision: screen.descriptionRevision + 1
       };

@@ -71,11 +71,14 @@ explicit screenshot action ─→ ADB capture ─→ per-target cache ─→ vie
                                                               └─→ browser loads PNG
 
 tap / swipe / long-press ─→ viewer event ─→ animation over cached screenshot
-describe_screen ──────────→ viewer event ─→ accessibility-bound animation
+describe_screen ──────────→ viewer event ─→ accessibility bounds + labels
+                                          (also works without a screenshot)
 interactive mode ─────────→ 1-second per-target captures + mouse/keyboard input
 ```
 
 Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP. On desktop, each device workspace has a maximum height of 900 px, with command history scrolling inside it.
+
+Without a cached screenshot, `describe_screen` displays a standalone view of accessibility bounds and labels, with the canvas extent estimated from the elements. With a screenshot, the same elements overlay the image.
 
 ## Dashboard preview
 
