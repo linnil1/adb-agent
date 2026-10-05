@@ -100,7 +100,6 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         with viewer_lock:
             screenshot_revision += 1
             revision = screenshot_revision
-            latest_descriptions.pop(target, None)
             latest_screenshots[target] = {
                 "revision": revision,
                 "target": target,

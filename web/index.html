@@ -139,9 +139,9 @@
               </svg>
               <div v-if="screenFor(viewerTarget).effect?.type === 'long_press'" :key="screenFor(viewerTarget).effect.id" class="long-press-ring" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%', animationDuration: (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></div>
             </div>
-            <div class="toolbar">
-              <button type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'screenshot')">Clear screenshot</button>
-              <button type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'description')">Clear description</button>
+            <div v-if="screenFor(viewerTarget).url || screenFor(viewerTarget).descriptionElements.length" class="toolbar">
+              <button v-if="screenFor(viewerTarget).url" type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'screenshot')">Clear screenshot</button>
+              <button v-if="screenFor(viewerTarget).descriptionElements.length" type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'description')">Clear description</button>
             </div>
           </div>
         </div>
@@ -516,7 +516,7 @@ createApp({
         ...previous, ready: animate ? false : previous.ready, revision,
         imageKey: animate ? revision : previous.imageKey, animated: animate,
         url: `/api/viewer/screenshot?target=${encodeURIComponent(target)}&revision=${encodeURIComponent(revision)}`,
-        descriptionElements: [], descriptionAnimated: false, effect: null
+        descriptionAnimated: false, effect: null
       };
     },
     showDescription(description, animate) {
