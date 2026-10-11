@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zlib
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
@@ -335,6 +336,78 @@ class AndroidControlTests(unittest.TestCase):
             urlopen.call_args_list[1].args[0],
             "http://127.0.0.1:8000/api/viewer/screenshot?target=device-1&revision=1",
         )
+
+    def test_execute_via_server_sends_screenshot_region(self):
+        call = io.BytesIO(json.dumps({
+            "ok": True,
+            "result": {"content": [{"type": "image", "cachedForViewer": True}]},
+            "viewer": {"target": "device-1", "revision": 2, "region": [1, 2, 3, 4]},
+        }).encode())
+        output = Path(self.temporary_directory.name) / "crop.png"
+        args = android.build_parser().parse_args([
+            "--action", "screenshot", "--output", str(output),
+            "--x1", "1", "--y1", "2", "--x2", "3", "--y2", "4",
+        ])
+        with patch.object(
+            android.urlrequest, "urlopen",
+            side_effect=[call, io.BytesIO(android.PNG_MAGIC + b"crop")],
+        ) as urlopen:
+            android.execute_via_server(args, "http://127.0.0.1:8000")
+        sent = json.loads(urlopen.call_args_list[0].args[0].data)
+        self.assertEqual(sent, {
+            "name": "screenshot", "arguments": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},
+        })
+
+    def test_screenshot_region_requires_all_ordered_corners(self):
+        self.assertIsNone(android.screenshot_region(None, None, None, None))
+        self.assertEqual(android.screenshot_region(0, 1, 2, 3), (0, 1, 2, 3))
+        for corners in ((0, 1, 2, None), (2, 0, 2, 3), (0, 3, 2, 3)):
+            with self.assertRaises(android.ControlError):
+                android.screenshot_region(*corners)
+        partial = android.action_args("screenshot", x1=0, y1=0)
+        with self.assertRaisesRegex(android.ControlError, "all of x1, y1, x2, and y2"):
+            android.prepare_action(partial)
+
+    @staticmethod
+    def decode_png(png):
+        width, height = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+        pixels = zlib.decompress(png[41:-16])  # IDAT data: after IHDR, before CRC + IEND
+        stride = width * 4 + 1
+        return width, height, [pixels[row * stride + 1:(row + 1) * stride] for row in range(height)]
+
+    def test_screenshot_region_transfers_rows_and_crops_columns(self):
+        width, height = 4, 3
+        screen = [bytes([x, y, 0, 255]) for y in range(height) for x in range(width)]
+        rows = [b"".join(screen[y * width:(y + 1) * width]) for y in range(height)]
+        calls = []
+
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                calls.append(args)
+                if args == ["devices", "-l"]:
+                    return b"List of devices attached\ndevice-1 device\n"
+                if args[0] == "exec-out" and "screencap" in args[1]:
+                    return b"4 3 1 16\n" + zlib.compress(b"".join(rows[1:3]), wbits=31)
+                raise AssertionError(args)
+
+        output = Path(self.temporary_directory.name) / "crop.png"
+        args = android.action_args("screenshot", output=str(output), x1=1, y1=1, x2=3, y2=3)
+        android.prepare_action(args)
+        result = android.device_action(args, FakeAdb())
+
+        self.assertEqual(result["region"], [1, 1, 3, 3])
+        self.assertIn("head -c $((2 * w * 4)) | gzip -1", calls[-1][1])
+        crop_width, crop_height, crop_rows = self.decode_png(output.read_bytes())
+        self.assertEqual((crop_width, crop_height), (2, 2))
+        self.assertEqual(crop_rows, [row[4:12] for row in rows[1:3]])
+
+    def test_screenshot_region_must_fit_the_screen(self):
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                return b"4 3 1 16\n"
+
+        with self.assertRaisesRegex(android.ControlError, "exceeds the 4x3 screen"):
+            android.capture_screen(FakeAdb(), "device-1", (0, 0, 5, 3))
 
     def test_set_default_target_requires_explicit_ready_target(self):
         args = android.build_parser().parse_args(["--action", "set-default-target"])

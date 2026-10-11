@@ -49,7 +49,7 @@ Action arguments:
 | `status` | none | none | Report device, Android, and battery status. |
 | `list-packages` | none | none | List installed packages. |
 | `current-focus` | none | none | Report the focused activity. |
-| `screenshot` | none | `--output PATH` (default `android-screen.png`) | Save a validated PNG screenshot. |
+| `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region | Save a validated PNG of the screen or one region. |
 | `describe-screen` | none | `--format json\|original` (default `json`) | Return accessibility elements or raw UI XML. |
 | `tap` | `--x INT --y INT` | none | Tap one coordinate. |
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` ms (default `300`) | Swipe between two coordinates. |
@@ -63,6 +63,12 @@ Action arguments:
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none | Open a web URL. |
 
 Coordinates and durations must be non-negative integers. Do not pass arguments unrelated to the selected action.
+
+## Screenshot regions
+
+Pass all of `--x1 --y1 --x2 --y2` (MCP: `x1, y1, x2, y2`) to capture only that rectangle. Coordinates are device pixels; `x2` and `y2` are exclusive, matching `describe-screen` `bounds`, so an element's bounds can be passed directly. The region must fit the screen.
+
+Prefer a region when only part of the screen matters: the phone sends just those rows, gzip-compressed, so the image is smaller and usually faster to fetch than a full screenshot. Narrow but tall regions save less, because whole rows are transferred. Regions need the `od`, `tail`, `head`, and `gzip` commands of Android's built-in toybox.
 
 ## Screen descriptions
 

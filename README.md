@@ -17,7 +17,7 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `status` | Report device state, model, Android version, and battery information. |
 | `list-packages` | List installed application packages. |
 | `current-focus` | Report the activity currently holding window focus. |
-| `screenshot` | Capture the display to a validated PNG file. |
+| `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |
 | `describe-screen` | Return parsed accessibility elements or the original UI XML. |
 | `tap` | Tap one screen coordinate. |
 | `swipe` | Swipe between two coordinates. |
@@ -70,6 +70,10 @@ Screenshot and visualization pipeline:
 explicit screenshot action ─→ ADB capture ─→ per-target cache ─→ viewer event
                                                               └─→ browser loads PNG
 
+region screenshot ─→ raw screencap on device ─→ rows y1..y2, gzip ─→ crop x1..x2 ─→ PNG
+                                                 (one adb call)       (host, stdlib)
+                  └─→ cached as a crop over the last full screenshot
+
 tap / swipe / long-press ─→ viewer event ─→ animation over cached screenshot
 describe_screen ──────────→ viewer event ─→ accessibility bounds + labels
                                           (also works without a screenshot)
@@ -77,6 +81,8 @@ interactive mode ─────────→ 1-second per-target captures + m
 ```
 
 Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP. On desktop, each device workspace has a maximum height of 900 px, with command history scrolling inside it.
+
+A region screenshot is drawn at its position over the dimmed last full screenshot, outlined, until the next full screenshot replaces it; without a full screenshot it is placed on a blank screen of the reported size. Description overlays, gesture animations, and interactive input keep using full-screen device coordinates.
 
 Without a cached screenshot, `describe_screen` displays a standalone view of accessibility bounds and labels, with the canvas extent estimated from the elements. With a screenshot, the same elements overlay the image. Taking a new screenshot preserves the latest description until it is replaced by `describe_screen` or removed with **Clear description**.
 

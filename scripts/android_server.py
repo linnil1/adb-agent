@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import threading
@@ -13,17 +14,17 @@ from typing import Literal
 
 if __package__:
     from .android_core import (
-        PNG_MAGIC, SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
-        action_args, advertised_server_url, clear_server_file,
+        SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
+        action_args, advertised_server_url, capture_screen, clear_server_file,
         description_elements, execute, resolve_adb, resolve_serial,
-        write_server_file,
+        screenshot_region, write_server_file,
     )
 else:
     from android_core import (
-        PNG_MAGIC, SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
-        action_args, advertised_server_url, clear_server_file,
+        SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
+        action_args, advertised_server_url, capture_screen, clear_server_file,
         description_elements, execute, resolve_adb, resolve_serial,
-        write_server_file,
+        screenshot_region, write_server_file,
     )
 
 
@@ -49,6 +50,11 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     viewer_sequence = 0
     screenshot_revision = 0
     latest_screenshots: dict[str, dict[str, object]] = {}
+    latest_crops: dict[str, dict[str, object]] = {}
+    # Lets /api/tools/call learn which screenshot its own tool call cached.
+    tool_capture: contextvars.ContextVar[dict[str, object] | None] = contextvars.ContextVar(
+        "tool_capture", default=None,
+    )
     latest_descriptions: dict[str, dict[str, object]] = {}
     server = MCPServer(
         SERVER_NAME,
@@ -87,27 +93,40 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             record(action, values, False, str(error))
             raise ToolError(str(error)) from None
 
-    def capture_png(target: str | None = None) -> tuple[str, bytes]:
+    def capture_png(
+        target: str | None = None, region: tuple[int, int, int, int] | None = None,
+    ) -> tuple[str, bytes, list[int]]:
         adb = Adb(resolved_adb, timeout)
         selected = resolve_serial(adb, target)
-        png = adb.run(["exec-out", "screencap", "-p"], serial=selected, timeout=60)
-        if not png.startswith(PNG_MAGIC):
-            raise ControlError("screenshot response is not a valid PNG")
-        return selected, png
+        png, screen = capture_screen(adb, selected, region)
+        return selected, png, screen
 
-    def cache_screenshot(target: str, png: bytes, *, interactive: bool = False) -> int:
+    def cache_screenshot(
+        target: str, png: bytes, *, interactive: bool = False,
+        screen: list[int] | None = None, region: tuple[int, int, int, int] | None = None,
+    ) -> dict[str, object]:
         nonlocal screenshot_revision
         with viewer_lock:
             screenshot_revision += 1
-            revision = screenshot_revision
-            latest_screenshots[target] = {
-                "revision": revision,
+            entry: dict[str, object] = {
+                "revision": screenshot_revision,
                 "target": target,
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 "png": png,
             }
-        publish("screenshot", revision=revision, target=target, interactive=interactive)
-        return revision
+            if region:
+                # A crop is drawn over the last full screenshot until the next one.
+                entry.update(screen=screen, region=list(region))
+                latest_crops[target] = entry
+            else:
+                latest_screenshots[target] = entry
+                latest_crops.pop(target, None)
+            metadata = viewer_metadata(entry)
+        publish("screenshot", **metadata, interactive=interactive)
+        return metadata
+
+    def viewer_metadata(entry: dict[str, object]) -> dict[str, object]:
+        return {key: value for key, value in entry.items() if key != "png"}
 
     def cache_description(target: str, elements: list[dict[str, object]]) -> None:
         description = {
@@ -145,15 +164,24 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return call("current-focus", target=target)  # type: ignore[return-value]
 
     @server.tool(name="screenshot")
-    def screenshot_tool(target: str | None = None):
-        """Capture the current device screen as a PNG image."""
+    def screenshot_tool(
+        target: str | None = None,
+        x1: int | None = None, y1: int | None = None,
+        x2: int | None = None, y2: int | None = None,
+    ):
+        """Capture the device screen as a PNG, or only the x1,y1-x2,y2 pixel region (x2, y2 exclusive)."""
+        values = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
         try:
-            selected, png = capture_png(target)
-            cache_screenshot(selected, png)
-            record("screenshot", {"target": selected}, True)
+            region = screenshot_region(x1, y1, x2, y2)
+            selected, png, screen = capture_png(target, region)
+            metadata = cache_screenshot(selected, png, screen=screen, region=region)
+            capture = tool_capture.get()
+            if capture is not None:
+                capture.update(metadata)
+            record("screenshot", {"target": selected, **values}, True)
             return Image(data=png, format="png")
         except ControlError as error:
-            record("screenshot", {"target": target}, False, str(error))
+            record("screenshot", {"target": target, **values}, False, str(error))
             raise ToolError(str(error)) from None
 
     @server.tool(name="describe_screen")
@@ -269,9 +297,9 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             if not isinstance(target, str) or not target:
                 return JSONResponse({"ok": False, "error": "target is required"}, status_code=400)
             try:
-                selected, png = await asyncio.to_thread(capture_png, target)
-                revision = cache_screenshot(selected, png, interactive=True)
-                return JSONResponse({"ok": True, "target": selected, "revision": revision})
+                selected, png, _ = await asyncio.to_thread(capture_png, target)
+                metadata = cache_screenshot(selected, png, interactive=True)
+                return JSONResponse({"ok": True, "target": selected, "revision": metadata["revision"]})
             except ControlError as error:
                 return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
 
@@ -282,25 +310,30 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
                 {"ok": False, "error": "target and revision are required"}, status_code=400,
             )
         with viewer_lock:
-            screenshot = latest_screenshots.get(requested_target)
-            png = screenshot.get("png") if screenshot else None
-            revision = screenshot.get("revision") if screenshot else None
-        if not isinstance(png, bytes):
+            cached = [
+                entry for entry in (
+                    latest_screenshots.get(requested_target), latest_crops.get(requested_target),
+                ) if entry
+            ]
+            screenshot = next(
+                (entry for entry in cached if str(entry["revision"]) == requested_revision), None,
+            )
+        if not cached:
             return JSONResponse(
                 {"ok": False, "error": "no screenshot has been captured"},
                 status_code=404,
             )
-        if requested_revision is not None and requested_revision != str(revision):
+        if screenshot is None:
             return JSONResponse(
                 {"ok": False, "error": "screenshot revision is no longer available"},
                 status_code=409,
             )
         return Response(
-            png,
+            screenshot["png"],
             media_type="image/png",
             headers={
                 "Cache-Control": "no-store",
-                "X-Screenshot-Revision": str(revision),
+                "X-Screenshot-Revision": str(screenshot["revision"]),
             },
         )
 
@@ -318,8 +351,11 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
                 status_code=400,
             )
         with viewer_lock:
-            cache = latest_screenshots if kind == "screenshot" else latest_descriptions
-            cache.pop(target, None)
+            if kind == "screenshot":
+                latest_screenshots.pop(target, None)
+                latest_crops.pop(target, None)
+            else:
+                latest_descriptions.pop(target, None)
         publish("cleared", target=target, kind=kind)
         return JSONResponse({"ok": True, "target": target, "kind": kind})
 
@@ -340,10 +376,8 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             with viewer_lock:
                 initial = {
                     "type": "state",
-                    "screenshots": [
-                        {key: value for key, value in screenshot.items() if key != "png"}
-                        for screenshot in latest_screenshots.values()
-                    ],
+                    "screenshots": [viewer_metadata(entry) for entry in latest_screenshots.values()],
+                    "crops": [viewer_metadata(entry) for entry in latest_crops.values()],
                     "descriptions": list(latest_descriptions.values()),
                 }
             yield "event: viewer\ndata: " + json.dumps(initial, ensure_ascii=False) + "\n\n"
@@ -397,6 +431,8 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         arguments = payload.get("arguments", {})
         if not isinstance(arguments, dict):
             return JSONResponse({"ok": False, "error": "arguments must be an object"}, status_code=400)
+        capture: dict[str, object] = {}
+        token = tool_capture.set(capture)
         try:
             result = await server.call_tool(payload["name"], arguments)
             body = result.model_dump(mode="json", by_alias=True, exclude_none=True)
@@ -408,23 +444,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
                     content["cachedForViewer"] = True
             response: dict[str, object] = {"ok": True, "result": body}
             if has_image:
-                with viewer_lock:
-                    requested_target = arguments.get("target")
-                    screenshot = (
-                        latest_screenshots.get(requested_target)
-                        if isinstance(requested_target, str)
-                        else None
-                    )
-                    if screenshot is None:
-                        screenshot = max(
-                            latest_screenshots.values(), key=lambda item: int(item["revision"])
-                        )
-                    response["viewer"] = {
-                        key: value for key, value in screenshot.items() if key != "png"
-                    }
+                response["viewer"] = capture
             return JSONResponse(response)
         except ToolError as error:
             return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+        finally:
+            tool_capture.reset(token)
 
     write_server_file(advertised_server_url(host, port))
     try:

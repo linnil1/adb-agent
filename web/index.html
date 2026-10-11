@@ -39,6 +39,8 @@
     .phone.interactive:focus { outline-color: #60a5fa; }
     .phone img { display: block; max-width: 100%; max-height: min(810px, calc(100dvh - 170px)); object-fit: contain; pointer-events: none; }
     .phone img.screen-enter { animation: screen-in .28s ease-out; }
+    .phone img.dimmed { filter: brightness(.45) saturate(.6); transition: filter .2s; }
+    .phone img.crop-layer { position: absolute; max-width: none; max-height: none; object-fit: fill; outline: 2px solid #f472b6; }
     .description-placeholder { width: min(320px, 70vw, calc(min(810px, calc(100dvh - 170px)) * var(--screen-ratio))); aspect-ratio: var(--screen-ratio); background: #10151d; }
     .empty { width: min(360px, 80vw); min-height: 540px; padding: 30px; display: grid; place-items: center; text-align: center; line-height: 1.5; color: #8190a5; background: #10151d; }
     .tap-pulse { position: absolute; width: 34px; height: 34px; margin: -17px; border: 3px solid #60a5fa; border-radius: 50%; animation: pulse .7s ease-out forwards; pointer-events: none; }
@@ -124,9 +126,10 @@
               </button>
             </div>
             <div class="phone" :class="{interactive: panels[viewerTarget].interactive}" :tabindex="panels[viewerTarget].interactive ? 0 : -1" :aria-label="`Interactive screen for ${targetLabel(viewerTarget)}`" @pointerdown="pointerDown(viewerTarget, $event)" @pointerup="pointerUp(viewerTarget, $event)" @pointercancel="pointerCancel(viewerTarget)" @keydown="interactiveKey(viewerTarget, $event)">
-              <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).imageKey" :src="screenFor(viewerTarget).url" :class="{'screen-enter': screenFor(viewerTarget).animated}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
-              <div v-else-if="screenFor(viewerTarget).descriptionElements.length" class="description-placeholder" :style="{'--screen-ratio': screenFor(viewerTarget).width / screenFor(viewerTarget).height}"></div>
+              <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).imageKey" :src="screenFor(viewerTarget).url" class="screen-surface" :class="{'screen-enter': screenFor(viewerTarget).animated, dimmed: screenFor(viewerTarget).crop}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
+              <div v-else-if="screenFor(viewerTarget).crop || screenFor(viewerTarget).descriptionElements.length" class="description-placeholder screen-surface" :style="{'--screen-ratio': screenFor(viewerTarget).width / screenFor(viewerTarget).height}"></div>
               <div v-else class="empty">Run describe_screen or screenshot to view this device.</div>
+              <img v-if="screenFor(viewerTarget).crop" :key="'crop-' + screenFor(viewerTarget).crop.revision" :src="screenFor(viewerTarget).crop.url" class="crop-layer" :class="{'screen-enter': screenFor(viewerTarget).crop.animated}" :style="cropStyle(viewerTarget)" @error="screenError(viewerTarget)">
               <svg v-if="screenFor(viewerTarget).ready && screenFor(viewerTarget).descriptionElements.length" :key="screenFor(viewerTarget).descriptionRevision" class="description-layer" :view-box.camel="`0 0 ${screenFor(viewerTarget).width} ${screenFor(viewerTarget).height}`">
                 <g v-for="(item, index) in screenFor(viewerTarget).descriptionElements" :key="index" class="describe-node" :class="{animated: screenFor(viewerTarget).descriptionAnimated, clickable: item.states.includes('clickable'), selected: item.states.includes('selected'), scrollable: item.states.includes('scrollable')}" :style="{animationDelay: Math.min(index, 30) * 25 + 'ms'}">
                   <rect :x="item.bounds[0]" :y="item.bounds[1]" :width="item.bounds[2] - item.bounds[0]" :height="item.bounds[3] - item.bounds[1]"></rect>
@@ -139,8 +142,8 @@
               </svg>
               <div v-if="screenFor(viewerTarget).effect?.type === 'long_press'" :key="screenFor(viewerTarget).effect.id" class="long-press-ring" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%', animationDuration: (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></div>
             </div>
-            <div v-if="screenFor(viewerTarget).url || screenFor(viewerTarget).descriptionElements.length" class="toolbar">
-              <button v-if="screenFor(viewerTarget).url" type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'screenshot')">Clear screenshot</button>
+            <div v-if="screenFor(viewerTarget).url || screenFor(viewerTarget).crop || screenFor(viewerTarget).descriptionElements.length" class="toolbar">
+              <button v-if="screenFor(viewerTarget).url || screenFor(viewerTarget).crop" type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'screenshot')">Clear screenshot</button>
               <button v-if="screenFor(viewerTarget).descriptionElements.length" type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'description')">Clear description</button>
             </div>
           </div>
@@ -194,7 +197,7 @@ createApp({
   data: () => ({
     tools: [], targets: [], panels: {}, refreshBusy: false, loadError: '',
     viewerTargets: [], targetsInitialized: false, screens: {},
-    emptyScreen: {url: '', ready: false, revision: 0, imageKey: 0, animated: false, width: 1, height: 1, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false, effect: null},
+    emptyScreen: {url: '', ready: false, revision: 0, imageKey: 0, animated: false, width: 1, height: 1, crop: null, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false, effect: null},
     effectId: 0,
     history: [], events: null, interactiveTimers: {}, typingTimers: {}, inputQueues: {}
   }),
@@ -209,7 +212,11 @@ createApp({
     for (const timer of Object.values(this.typingTimers)) clearTimeout(timer);
   },
   methods: {
-    numeric(schema) { return schema.type === 'integer' || schema.type === 'number'; },
+    numeric(schema) {
+      // Optional integers arrive as anyOf [{type: integer}, {type: null}].
+      return [schema.type, ...(schema.anyOf || []).map(item => item.type)]
+        .some(type => type === 'integer' || type === 'number');
+    },
     async loadTools() {
       try {
         const response = await fetch('/api/tools', {cache: 'no-store'});
@@ -279,8 +286,7 @@ createApp({
       const schema = tool?.inputSchema || {}, result = {};
       for (const [name, value] of Object.entries(values)) {
         if (value === '' || value === null || value === undefined) continue;
-        const type = schema.properties?.[name]?.type;
-        result[name] = type === 'integer' || type === 'number' ? Number(value) : value;
+        result[name] = this.numeric(schema.properties?.[name] || {}) ? Number(value) : value;
       }
       if (target && schema.properties?.target && result.target === undefined) result.target = target;
       return result;
@@ -346,7 +352,7 @@ createApp({
       } else {
         this.screens[target] = {
           ...screen, descriptionElements: [], descriptionAnimated: false,
-          ready: screen.url ? screen.ready : false, effect: null
+          ready: screen.url || screen.crop ? screen.ready : false, effect: null
         };
       }
     },
@@ -393,22 +399,24 @@ createApp({
       }
       finally { panel.capturing = false; }
     },
-    screenPoint(event) {
-      const image = event.currentTarget.querySelector('img');
-      if (!image?.naturalWidth || !image.naturalHeight) return null;
-      const rect = image.getBoundingClientRect();
+    screenPoint(target, event) {
+      // Map against the full screen size, never a crop's own pixel size.
+      const screen = this.screenFor(target);
+      const surface = event.currentTarget.querySelector('.screen-surface');
+      if (!screen.ready || !surface || (!screen.url && !screen.crop)) return null;
+      const rect = surface.getBoundingClientRect();
       const clientX = Math.max(rect.left, Math.min(rect.right, event.clientX));
       const clientY = Math.max(rect.top, Math.min(rect.bottom, event.clientY));
       return {
-        x: Math.min(image.naturalWidth - 1, Math.round((clientX - rect.left) * image.naturalWidth / rect.width)),
-        y: Math.min(image.naturalHeight - 1, Math.round((clientY - rect.top) * image.naturalHeight / rect.height)),
+        x: Math.min(screen.width - 1, Math.round((clientX - rect.left) * screen.width / rect.width)),
+        y: Math.min(screen.height - 1, Math.round((clientY - rect.top) * screen.height / rect.height)),
         clientX, clientY
       };
     },
     pointerDown(target, event) {
       const panel = this.panels[target];
       if (!panel?.interactive || (event.pointerType === 'mouse' && event.button !== 0)) return;
-      const point = this.screenPoint(event);
+      const point = this.screenPoint(target, event);
       if (!point) return;
       event.preventDefault();
       event.currentTarget.focus();
@@ -418,7 +426,7 @@ createApp({
     pointerUp(target, event) {
       const panel = this.panels[target], start = panel?.pointer;
       if (!panel?.interactive || !start || start.pointerId !== event.pointerId) return;
-      const end = this.screenPoint(event);
+      const end = this.screenPoint(target, event);
       panel.pointer = null;
       if (!end) return;
       event.preventDefault();
@@ -482,8 +490,10 @@ createApp({
       if (event.type === 'state') {
         this.screens = {};
         for (const screenshot of event.screenshots) this.showScreenshot(screenshot.revision, screenshot.target, false);
+        for (const crop of event.crops || []) this.showCrop(crop, false);
         for (const description of event.descriptions) this.showDescription(description, false);
-      } else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, !event.interactive);
+      } else if (event.type === 'screenshot' && event.region) this.showCrop(event, !event.interactive);
+      else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, !event.interactive);
       else if (event.type === 'description') this.showDescription(event, true);
       else if (event.type === 'cleared') this.clearScreen(event.target, event.kind);
       else if (event.type === 'gesture') this.showGesture(event);
@@ -509,26 +519,53 @@ createApp({
       }
       if (effect) this.screens[event.target] = {...screen, effect};
     },
+    screenshotUrl(target, revision) {
+      return `/api/viewer/screenshot?target=${encodeURIComponent(target)}&revision=${encodeURIComponent(revision)}`;
+    },
     showScreenshot(revision, target, animate) {
       if (!target) return;
       const previous = this.screenFor(target);
       this.screens[target] = {
         ...previous, ready: animate ? false : previous.ready, revision,
         imageKey: animate ? revision : previous.imageKey, animated: animate,
-        url: `/api/viewer/screenshot?target=${encodeURIComponent(target)}&revision=${encodeURIComponent(revision)}`,
+        url: this.screenshotUrl(target, revision), crop: null,
         descriptionAnimated: false, effect: null
+      };
+    },
+    showCrop(crop, animate) {
+      if (!crop.target || !crop.region || !crop.screen) return;
+      const screen = this.screenFor(crop.target);
+      const [width, height] = crop.screen;
+      // A full screenshot of another size (e.g. rotated) cannot sit under the crop.
+      const mismatched = screen.url && screen.ready && (screen.width !== width || screen.height !== height);
+      const url = mismatched ? '' : screen.url;
+      this.screens[crop.target] = {
+        ...screen, url, width, height, ready: url ? screen.ready : true, effect: null,
+        crop: {
+          revision: crop.revision, region: crop.region, screen: crop.screen, animated: animate,
+          url: this.screenshotUrl(crop.target, crop.revision)
+        }
+      };
+    },
+    cropStyle(target) {
+      const {crop, width, height} = this.screenFor(target);
+      const [x1, y1, x2, y2] = crop.region;
+      return {
+        left: x1 * 100 / width + '%', top: y1 * 100 / height + '%',
+        width: (x2 - x1) * 100 / width + '%', height: (y2 - y1) * 100 / height + '%'
       };
     },
     showDescription(description, animate) {
       if (!description.target) return;
       const screen = this.screenFor(description.target);
       const elements = description.elements || [];
-      // Without a PNG, estimate the canvas extent from accessibility bounds.
-      const width = screen.url ? screen.width : Math.max(1, ...elements.map(item => item.bounds[2]));
-      const height = screen.url ? screen.height : Math.max(1, ...elements.map(item => item.bounds[3]));
+      // Without a screenshot or crop, estimate the canvas extent from accessibility bounds.
+      const known = screen.url || screen.crop;
+      const width = known ? screen.width : Math.max(1, ...elements.map(item => item.bounds[2]));
+      const height = known ? screen.height : Math.max(1, ...elements.map(item => item.bounds[3]));
       this.screens[description.target] = {
         ...screen,
-        width, height, ready: screen.url ? screen.ready : elements.length > 0,
+        width, height, ready: known ? screen.ready : elements.length > 0,
         descriptionElements: elements,
         descriptionAnimated: animate,
         descriptionRevision: screen.descriptionRevision + 1
@@ -536,9 +573,13 @@ createApp({
     },
     screenLoaded(target, event) {
       const screen = this.screenFor(target), image = event.currentTarget;
-      this.screens[target] = {
-        ...screen, width: image?.naturalWidth || 1, height: image?.naturalHeight || 1, ready: true
-      };
+      const width = image?.naturalWidth || 1, height = image?.naturalHeight || 1;
+      const [screenWidth, screenHeight] = screen.crop?.screen || [width, height];
+      if (width !== screenWidth || height !== screenHeight) {
+        this.screens[target] = {...screen, url: '', width: screenWidth, height: screenHeight, ready: true};
+        return;
+      }
+      this.screens[target] = {...screen, width, height, ready: true};
     },
     screenError(target) {
       if (this.panels[target]) this.panels[target].error = `Unable to load the cached screenshot for ${target}`;

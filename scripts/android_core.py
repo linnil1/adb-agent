@@ -9,8 +9,10 @@ import os
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import time
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,7 +25,8 @@ ACTIONS = (
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
-    "list-packages": set(), "current-focus": set(), "screenshot": {"output"},
+    "list-packages": set(), "current-focus": set(),
+    "screenshot": {"output", "x1", "y1", "x2", "y2"},
     "describe-screen": {"format"}, "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
@@ -376,6 +379,66 @@ def dump_ui(adb: Adb, serial: str) -> str:
     return adb.run(["exec-out", "cat", remote], serial=serial).decode("utf-8", "replace")
 
 
+def screenshot_region(
+    x1: int | None, y1: int | None, x2: int | None, y2: int | None,
+) -> tuple[int, int, int, int] | None:
+    values = (x1, y1, x2, y2)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ControlError("a screenshot region needs all of x1, y1, x2, and y2")
+    if min(values) < 0 or x2 <= x1 or y2 <= y1:  # type: ignore[operator]
+        raise ControlError("screenshot region must satisfy 0 <= x1 < x2 and 0 <= y1 < y2")
+    return x1, y1, x2, y2  # type: ignore[return-value]
+
+
+def encode_png(width: int, height: int, rows: list[bytes]) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    pixels = zlib.compress(b"".join(b"\x00" + row for row in rows), 6)
+    return PNG_MAGIC + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+
+
+def capture_screen(
+    adb: Adb, serial: str, region: tuple[int, int, int, int] | None = None,
+) -> tuple[bytes, list[int]]:
+    """Return a PNG and the full screen size; a region transfers only its rows."""
+    if region is None:
+        png = adb.run(["exec-out", "screencap", "-p"], serial=serial, timeout=60)
+        if not png.startswith(PNG_MAGIC):
+            raise ControlError("screenshot response is not a valid PNG")
+        return png, list(struct.unpack(">II", png[16:24]))
+    x1, y1, x2, y2 = region
+    # Raw screencap is width, height, format[, colorspace] then RGBA rows.
+    script = (
+        "f=/data/local/tmp/android-control-screen-$$.raw; screencap \"$f\" || exit 1; "
+        "set -- $(od -An -tu4 -N12 \"$f\"); w=$1; h=$2; "
+        "s=$(($(wc -c < \"$f\") - w * h * 4)); echo \"$w $h $3 $s\"; "
+        f"if [ {y2} -le $h ]; then tail -c +$((s + {y1} * w * 4 + 1)) \"$f\" "
+        f"| head -c $(({y2 - y1} * w * 4)) | gzip -1; fi; rm -f \"$f\""
+    )
+    output = adb.run(["exec-out", script], serial=serial, timeout=60)
+    line, _, raw = output.partition(b"\n")
+    try:
+        width, height, pixel_format, header_size = map(int, line.split())
+    except ValueError:
+        raise ControlError("raw screenshot header is invalid") from None
+    if pixel_format != 1 or header_size not in (12, 16):
+        raise ControlError("raw screenshot is not RGBA_8888")
+    if x2 > width or y2 > height:
+        raise ControlError(f"screenshot region exceeds the {width}x{height} screen")
+    try:
+        raw = zlib.decompress(raw, 31)
+    except zlib.error:
+        raise ControlError("raw screenshot could not be decompressed") from None
+    stride = width * 4
+    if len(raw) != (y2 - y1) * stride:
+        raise ControlError("raw screenshot was truncated")
+    rows = [raw[row * stride + x1 * 4:row * stride + x2 * 4] for row in range(y2 - y1)]
+    return encode_png(x2 - x1, y2 - y1, rows), [width, height]
+
+
 def parse_packages(output: str) -> list[str]:
     return [line[8:].strip() for line in output.splitlines() if line.startswith("package:")]
 
@@ -484,13 +547,15 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
             raise ControlError("focused activity not found in dumpsys window")
         return {"target": serial, **focused}
     elif action == "screenshot":
-        png = adb.run(["exec-out", "screencap", "-p"], serial=serial, timeout=60)
-        if not png.startswith(PNG_MAGIC):
-            raise ControlError("screenshot response is not a valid PNG")
+        region = screenshot_region(args.x1, args.y1, args.x2, args.y2)
+        png, _ = capture_screen(adb, serial, region)
         output = Path(args.output).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(png)
-        return {"target": serial, "path": str(output), "bytes": len(png)}
+        result = {"target": serial, "path": str(output), "bytes": len(png)}
+        if region:
+            result["region"] = list(region)
+        return result
     elif action == "describe-screen":
         return describe_ui(serial, dump_ui(adb, serial), args.format or "json")
     elif action == "tap":
@@ -572,6 +637,8 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
     validate_action_args(args)
+    if args.action == "screenshot":
+        screenshot_region(args.x1, args.y1, args.x2, args.y2)
     if args.action in {"swipe", "long-press"} and args.duration is None:
         args.duration = 1000 if args.action == "long-press" else 300
     if args.action == "screenshot" and args.output is None:
