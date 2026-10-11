@@ -61,6 +61,8 @@ Action arguments:
 | `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` | Launch an installed app. |
 | `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none | Force-stop an installed app. |
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none | Open a web URL. |
+| `start-screen-record` | none | `--time-limit SECONDS` (1-180, default `180`) | Start recording the screen in the background. |
+| `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) | Stop the recording and save the MP4. |
 
 Coordinates and durations must be non-negative integers. Do not pass arguments unrelated to the selected action.
 
@@ -69,6 +71,12 @@ Coordinates and durations must be non-negative integers. Do not pass arguments u
 Pass all of `--x1 --y1 --x2 --y2` (MCP: `x1, y1, x2, y2`) to capture only that rectangle. Coordinates are device pixels; `x2` and `y2` are exclusive, matching `describe-screen` `bounds`, so an element's bounds can be passed directly. The region must fit the screen.
 
 Prefer a region when only part of the screen matters: the phone sends just those rows, gzip-compressed, so the image is smaller and usually faster to fetch than a full screenshot. Narrow but tall regions save less, because whole rows are transferred. Regions need the `od`, `tail`, `head`, and `gzip` commands of Android's built-in toybox.
+
+## Screen recording
+
+Run `start-screen-record`, perform the steps to capture with the other actions, then run `stop-screen-record`. The recording runs on the device, so start and stop may be separate calls; one recording runs per device at a time. It stops by itself at `--time-limit`, and `stop-screen-record` still collects it afterward.
+
+Recordings are H.264 MP4 at the screen's aspect ratio, at most 1280 px on the long side, 4 Mbit/s. Long recordings over a slow wireless connection take a while to download. The result reports `seconds` from the MP4 header. Through MCP, `stop_screen_record` returns a `url` for the MP4 instead of the video data.
 
 ## Screen descriptions
 

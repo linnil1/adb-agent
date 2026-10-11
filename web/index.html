@@ -34,6 +34,7 @@
     .device-name { max-width: 100%; color: #91a0b6; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
     .interactive-toggle { padding: 5px 8px; font-size: 11px; }
     .interactive-toggle.active { color: #86efac; border-color: #22c55e; background: #12351f; }
+    .rec-badge { padding: 4px 8px; border: 1px solid #fb7185; border-radius: 999px; color: #fecdd3; background: #4c0519; font-size: 11px; line-height: 1.2; animation: rec-blink 1.2s ease-in-out infinite; }
     .phone { position: relative; line-height: 0; max-width: 100%; max-height: min(810px, calc(100dvh - 170px)); border: 1px solid #303b4d; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 70px #000a; touch-action: none; user-select: none; }
     .phone.interactive { border-color: #22c55e; outline: 2px solid #22c55e33; cursor: crosshair; }
     .phone.interactive:focus { outline-color: #60a5fa; }
@@ -59,8 +60,9 @@
     @keyframes dash { to { stroke-dashoffset: -72; } }
     @keyframes fade { 70% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes hold-ring { 0% { transform: scale(.55); opacity: 0; } 15% { transform: scale(1); opacity: 1; } 80% { transform: scale(1); opacity: 1; } 100% { transform: scale(1.45); opacity: 0; } }
+    @keyframes rec-blink { 50% { opacity: .45; } }
     @keyframes describe-in { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: scale(1); } }
-    aside { min-height: 0; border-left: 1px solid #202733; display: grid; grid-template-rows: auto 1fr; background: #0e1219; }
+    aside { min-height: 0; border-left: 1px solid #202733; display: grid; grid-template-rows: auto auto 1fr; background: #0e1219; }
     .panel { padding: 14px; border-bottom: 1px solid #202733; }
     .panel h2, .history h2 { font-size: 12px; color: #91a0b6; text-transform: uppercase; letter-spacing: .08em; }
     .panel h2 { margin: 0 0 10px; }
@@ -73,7 +75,11 @@
     .status.error { color: #fb7185; }
     .interactive-help { margin-top: 7px; font-size: 11px; line-height: 1.45; color: #86efac; }
     .result { max-height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 9px 0 0; font-size: 11px; color: #9ba9bc; }
-    .history { min-height: 0; overflow: auto; padding: 0; }
+    .recording video { display: block; width: 100%; max-height: 260px; border-radius: 8px; background: #000; }
+    .recording .toolbar { margin-top: 9px; }
+    .recording a { padding: 8px 12px; border: 1px solid #2a3342; border-radius: 8px; background: #141a23; color: inherit; text-decoration: none; }
+    .recording a:hover { border-color: #60a5fa; background: #17243a; }
+    .history { grid-row: 3; min-height: 0; overflow: auto; padding: 0; }
     .history h2 { position: sticky; top: 0; margin: 0; padding: 14px; background: #0e1219ee; border-bottom: 1px solid #202733; }
     .entry { padding: 11px 14px; border-bottom: 1px solid #1b222d; font-size: 12px; }
     .entry.fresh { animation: history-ok .42s ease-out; }
@@ -124,6 +130,7 @@
               <button type="button" class="interactive-toggle" :class="{active: panels[viewerTarget].interactive}" @click="setInteractive(viewerTarget, !panels[viewerTarget].interactive)">
                 {{ panels[viewerTarget].interactive ? 'Interactive on' : 'Interactive' }}
               </button>
+              <span v-if="activeRecordings[viewerTarget]" class="rec-badge" title="Screen recording in progress">● REC</span>
             </div>
             <div class="phone" :class="{interactive: panels[viewerTarget].interactive}" :tabindex="panels[viewerTarget].interactive ? 0 : -1" :aria-label="`Interactive screen for ${targetLabel(viewerTarget)}`" @pointerdown="pointerDown(viewerTarget, $event)" @pointerup="pointerUp(viewerTarget, $event)" @pointercancel="pointerCancel(viewerTarget)" @keydown="interactiveKey(viewerTarget, $event)">
               <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).imageKey" :src="screenFor(viewerTarget).url" class="screen-surface" :class="{'screen-enter': screenFor(viewerTarget).animated, dimmed: screenFor(viewerTarget).crop}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
@@ -172,6 +179,16 @@
             <pre v-if="panels[viewerTarget].resultText" class="result">{{ panels[viewerTarget].resultText }}</pre>
           </section>
 
+          <section v-if="recordings[viewerTarget]" class="panel recording">
+            <h2>Screen recording</h2>
+            <video :key="recordings[viewerTarget].revision" :src="recordings[viewerTarget].url" controls muted playsinline preload="metadata"></video>
+            <div class="hint">{{ recordingLabel(viewerTarget) }}</div>
+            <div class="toolbar">
+              <a :href="recordings[viewerTarget].url" :download="`screen-recording-${recordings[viewerTarget].revision}.mp4`">Download</a>
+              <button type="button" :disabled="panels[viewerTarget].clearing" @click="clearViewer(viewerTarget, 'recording')">Clear recording</button>
+            </div>
+          </section>
+
           <section class="history">
             <h2>History</h2>
             <div v-if="!historyFor(viewerTarget).length" class="entry">No commands yet.</div>
@@ -197,6 +214,7 @@ createApp({
   data: () => ({
     tools: [], targets: [], panels: {}, refreshBusy: false, loadError: '',
     viewerTargets: [], targetsInitialized: false, screens: {},
+    recordings: {}, activeRecordings: {}, recordingTimers: {},
     emptyScreen: {url: '', ready: false, revision: 0, imageKey: 0, animated: false, width: 1, height: 1, crop: null, descriptionElements: [], descriptionRevision: 0, descriptionAnimated: false, effect: null},
     effectId: 0,
     history: [], events: null, interactiveTimers: {}, typingTimers: {}, inputQueues: {}
@@ -210,6 +228,7 @@ createApp({
     this.events?.close();
     for (const timer of Object.values(this.interactiveTimers)) clearInterval(timer);
     for (const timer of Object.values(this.typingTimers)) clearTimeout(timer);
+    for (const timer of Object.values(this.recordingTimers)) clearTimeout(timer);
   },
   methods: {
     numeric(schema) {
@@ -339,10 +358,40 @@ createApp({
         });
         const body = await this.jsonResponse(response, 'Clear viewer');
         if (!response.ok || !body.ok) throw new Error(body.error || 'Unable to clear viewer');
-        this.clearScreen(target, kind);
-        panel.status = `${kind === 'screenshot' ? 'Screenshot' : 'Description'} cleared`;
+        this.clearCache(target, kind);
+        panel.status = `${{screenshot: 'Screenshot', description: 'Description', recording: 'Recording'}[kind]} cleared`;
       } catch (error) { panel.error = error.message; }
       finally { panel.clearing = false; }
+    },
+    clearCache(target, kind) {
+      if (kind === 'recording') delete this.recordings[target];
+      else this.clearScreen(target, kind);
+    },
+    showRecording(recording) {
+      if (!recording.target) return;
+      const query = `target=${encodeURIComponent(recording.target)}&revision=${encodeURIComponent(recording.revision)}`;
+      this.recordings[recording.target] = {...recording, url: `/api/viewer/recording?${query}`};
+    },
+    markRecording(recording) {
+      const target = recording.target;
+      if (!target) return;
+      clearTimeout(this.recordingTimers[target]);
+      const remaining = Date.parse(recording.started_at) + recording.time_limit * 1000 - Date.now();
+      if (!(remaining > 0)) { delete this.activeRecordings[target]; return; }
+      this.activeRecordings[target] = recording;
+      // screenrecord stops itself at its time limit.
+      this.recordingTimers[target] = setTimeout(() => this.endRecording(target), remaining);
+    },
+    endRecording(target) {
+      clearTimeout(this.recordingTimers[target]);
+      delete this.recordingTimers[target];
+      delete this.activeRecordings[target];
+    },
+    recordingLabel(target) {
+      const {seconds, bytes, captured_at: capturedAt} = this.recordings[target];
+      const length = typeof seconds === 'number' ? `${seconds.toFixed(1)} s · ` : '';
+      const size = bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+      return `${length}${size} · ${this.formatTime(capturedAt)}`;
     },
     clearScreen(target, kind) {
       const screen = this.screenFor(target);
@@ -492,10 +541,19 @@ createApp({
         for (const screenshot of event.screenshots) this.showScreenshot(screenshot.revision, screenshot.target, false);
         for (const crop of event.crops || []) this.showCrop(crop, false);
         for (const description of event.descriptions) this.showDescription(description, false);
+        this.recordings = {};
+        for (const recording of event.recordings || []) this.showRecording(recording);
+        for (const target of Object.keys(this.activeRecordings)) this.endRecording(target);
+        for (const recording of event.active_recordings || []) this.markRecording(recording);
       } else if (event.type === 'screenshot' && event.region) this.showCrop(event, !event.interactive);
       else if (event.type === 'screenshot') this.showScreenshot(event.revision, event.target, !event.interactive);
       else if (event.type === 'description') this.showDescription(event, true);
-      else if (event.type === 'cleared') this.clearScreen(event.target, event.kind);
+      else if (event.type === 'cleared') this.clearCache(event.target, event.kind);
+      else if (event.type === 'recording' && event.state === 'started') this.markRecording(event);
+      else if (event.type === 'recording') {
+        this.endRecording(event.target);
+        if (event.state === 'stopped') this.showRecording(event);
+      }
       else if (event.type === 'gesture') this.showGesture(event);
       else if (event.type === 'history' && event.entry && !this.history.some(item => item.time === event.entry.time)) this.history.unshift({...event.entry, _fresh: true});
       for (const panel of Object.values(this.panels)) panel.status = 'Viewer connected';

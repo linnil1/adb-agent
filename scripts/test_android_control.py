@@ -409,6 +409,89 @@ class AndroidControlTests(unittest.TestCase):
         with self.assertRaisesRegex(android.ControlError, "exceeds the 4x3 screen"):
             android.capture_screen(FakeAdb(), "device-1", (0, 0, 5, 3))
 
+    @staticmethod
+    def fake_mp4(timescale=1000, duration=4580):
+        def box(kind, body):
+            return (len(body) + 8).to_bytes(4, "big") + kind + body
+        mvhd = bytes(12) + timescale.to_bytes(4, "big") + duration.to_bytes(4, "big") + bytes(80)
+        # A stray "mvhd" in the media data must not be mistaken for the header.
+        return box(b"ftyp", b"isom" + bytes(4)) + box(b"mdat", b"..mvhd..") + box(b"moov", box(b"mvhd", mvhd))
+
+    def test_start_screen_record_runs_detached_and_reports_state(self):
+        replies = iter([b"started\n", b"running\n", b"failed\nError: encoder rejected size\n"])
+        scripts = []
+
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                if args == ["devices", "-l"]:
+                    return b"List of devices attached\ndevice-1 device\n"
+                scripts.append(args[1])
+                return next(replies)
+
+        args = android.action_args("start-screen-record", time_limit=30)
+        android.prepare_action(args)
+        self.assertEqual(android.device_action(args, FakeAdb())["time_limit"], 30)
+        self.assertIn("nohup screenrecord $size --time-limit 30 --bit-rate 4000000", scripts[0])
+        with self.assertRaisesRegex(android.ControlError, "already running"):
+            android.device_action(args, FakeAdb())
+        with self.assertRaisesRegex(android.ControlError, "failed to start: Error: encoder rejected size"):
+            android.device_action(args, FakeAdb())
+
+    def test_stop_screen_record_saves_mp4_with_its_length(self):
+        video = self.fake_mp4()
+        replies = iter([b"stopped\n" + video, b"none\n", b"stopped\n"])
+
+        class FakeAdb:
+            timeout = 30.0
+
+            def run(self, args, **kwargs):
+                if args == ["devices", "-l"]:
+                    return b"List of devices attached\ndevice-1 device\n"
+                return next(replies)
+
+        output = Path(self.temporary_directory.name) / "screen.mp4"
+        args = android.action_args("stop-screen-record", output=str(output))
+        android.prepare_action(args)
+        result = android.device_action(args, FakeAdb())
+        self.assertEqual(result["seconds"], 4.58)
+        self.assertEqual(output.read_bytes(), video)
+        with self.assertRaisesRegex(android.ControlError, "no screen recording is running"):
+            android.device_action(args, FakeAdb())
+        with self.assertRaisesRegex(android.ControlError, "no valid MP4"):
+            android.device_action(args, FakeAdb())
+
+    def test_recording_arguments(self):
+        start = android.action_args("start-screen-record")
+        android.prepare_action(start)
+        self.assertEqual(start.time_limit, android.MAX_RECORD_SECONDS)
+        stop = android.action_args("stop-screen-record")
+        android.prepare_action(stop)
+        self.assertEqual(stop.output, "android-screen.mp4")
+        with self.assertRaisesRegex(android.ControlError, "between 1 and 180"):
+            android.prepare_action(android.action_args("start-screen-record", time_limit=181))
+        with self.assertRaisesRegex(android.ControlError, "not valid for status"):
+            android.prepare_action(android.action_args("status", time_limit=5))
+
+    def test_execute_via_server_downloads_recording(self):
+        server = "http://127.0.0.1:8000"
+        url = server + "/api/viewer/recording?target=device-1&revision=1"
+        call = io.BytesIO(json.dumps({"ok": True, "result": {"structuredContent": {
+            "target": "device-1", "revision": 1, "seconds": 4.58, "bytes": 3, "url": url,
+        }}}).encode())
+        output = Path(self.temporary_directory.name) / "screen.mp4"
+        args = android.build_parser().parse_args([
+            "--action", "stop-screen-record", "--output", str(output),
+        ])
+        with patch.object(
+            android.urlrequest, "urlopen", side_effect=[call, io.BytesIO(b"mp4")]
+        ) as urlopen:
+            result = android.execute_via_server(args, server)
+        self.assertEqual(result, {"target": "device-1", "path": str(output), "bytes": 3, "seconds": 4.58})
+        self.assertEqual(urlopen.call_args_list[1].args[0], url)
+        self.assertEqual(json.loads(urlopen.call_args_list[0].args[0].data), {
+            "name": "stop_screen_record", "arguments": {},
+        })
+
     def test_set_default_target_requires_explicit_ready_target(self):
         args = android.build_parser().parse_args(["--action", "set-default-target"])
         with self.assertRaisesRegex(android.ControlError, "--target is required"):

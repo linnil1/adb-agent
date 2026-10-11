@@ -29,6 +29,8 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `launch-app` | Launch an installed package, optionally forcing a restart. |
 | `force-stop-app` | Force-stop an installed package. |
 | `open-url` | Open an HTTP or HTTPS URL on the device. |
+| `start-screen-record` | Start a background screen recording, up to 180 seconds. |
+| `stop-screen-record` | Stop the recording and save the MP4. |
 
 ## Streamable HTTP MCP
 
@@ -74,6 +76,9 @@ region screenshot ─→ raw screencap on device ─→ rows y1..y2, gzip ─→
                                                  (one adb call)       (host, stdlib)
                   └─→ cached as a crop over the last full screenshot
 
+start_screen_record ─→ screenrecord detached on device ─→ viewer REC badge
+stop_screen_record ──→ SIGINT, pull MP4 ─→ per-target cache ─→ viewer video + download URL
+
 tap / swipe / long-press ─→ viewer event ─→ animation over cached screenshot
 describe_screen ──────────→ viewer event ─→ accessibility bounds + labels
                                           (also works without a screenshot)
@@ -83,6 +88,8 @@ interactive mode ─────────→ 1-second per-target captures + m
 Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP. On desktop, each device workspace has a maximum height of 900 px, with command history scrolling inside it.
 
 A region screenshot is drawn at its position over the dimmed last full screenshot, outlined, until the next full screenshot replaces it; without a full screenshot it is placed on a blank screen of the reported size. Description overlays, gesture animations, and interactive input keep using full-screen device coordinates.
+
+While a recording runs, the device heading shows a **REC** badge. A stopped recording appears in a **Screen recording** panel with playback, **Download**, and **Clear recording**.
 
 Without a cached screenshot, `describe_screen` displays a standalone view of accessibility bounds and labels, with the canvas extent estimated from the elements. With a screenshot, the same elements overlay the image. Taking a new screenshot preserves the latest description until it is replaced by `describe_screen` or removed with **Clear description**.
 

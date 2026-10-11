@@ -141,6 +141,22 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
     structured = result.get("structuredContent")
     if isinstance(structured, dict) and set(structured) == {"result"}:
         return structured["result"]
-    if structured is not None:
-        return structured
-    raise ControlError("local MCP server omitted structured tool output")
+    if structured is None:
+        raise ControlError("local MCP server omitted structured tool output")
+    if args.action == "stop-screen-record":
+        url = structured.get("url") if isinstance(structured, dict) else None
+        if not isinstance(url, str) or not url.startswith(server_url + "/"):
+            raise ControlError("local MCP server omitted the recording url")
+        try:
+            with urlrequest.urlopen(url, timeout=max(args.timeout, 1)) as response:
+                video = response.read()
+        except (OSError, urlerror.URLError) as error:
+            raise ControlError("recording stopped but the MP4 could not be downloaded") from error
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(video)
+        return {
+            "target": structured.get("target"), "path": str(output),
+            "bytes": len(video), "seconds": structured.get("seconds"),
+        }
+    return structured

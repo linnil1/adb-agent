@@ -22,6 +22,7 @@ ACTIONS = (
     "list-targets", "set-default-target", "status", "list-packages", "current-focus",
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
+    "start-screen-record", "stop-screen-record",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -33,6 +34,7 @@ ACTION_FIELDS = {
     "press-key": {"key"}, "home": set(), "back": set(),
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
     "open-url": {"url"},
+    "start-screen-record": {"time_limit"}, "stop-screen-record": {"output"},
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
@@ -46,6 +48,10 @@ KEY_MAP = {
     "tab": 61, "enter": 66, "delete": 67, "recents": 187,
 }
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+RECORD_PATH = "/data/local/tmp/android-control-record"
+RECORD_BIT_RATE = 4_000_000
+RECORD_MAX_SIDE = 1280
+MAX_RECORD_SECONDS = 180
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_TARGET_TTL = 60 * 60
 STATE_FILE_ENV = "ANDROID_CONTROL_STATE_FILE"
@@ -439,6 +445,79 @@ def capture_screen(
     return encode_png(x2 - x1, y2 - y1, rows), [width, height]
 
 
+def start_screen_record(adb: Adb, serial: str, time_limit: int) -> None:
+    # Detached on the device, so later adb calls (or CLI runs) can stop it.
+    script = (
+        f"f={RECORD_PATH}; "
+        "if [ -f $f.pid ] && grep -q screenrecord /proc/$(cat $f.pid)/cmdline 2>/dev/null; "
+        "then echo running; exit 0; fi; rm -f $f.mp4 $f.log; "
+        # Keep the screen's aspect ratio; encoders often reject full resolution and letterbox.
+        "s=$(wm size | tail -n 1 | sed 's/.*: //'); w=${s%x*}; h=${s#*x}; size=; "
+        "case \"$w$h\" in *[!0-9]*|'') ;; *) l=$((w > h ? w : h)); "
+        f"if [ $l -gt {RECORD_MAX_SIDE} ]; then w=$((w * {RECORD_MAX_SIDE} / l / 2 * 2)); "
+        f"h=$((h * {RECORD_MAX_SIDE} / l / 2 * 2)); fi; size=\"--size ${{w}}x${{h}}\";; esac; "
+        f"nohup screenrecord $size --time-limit {time_limit} --bit-rate {RECORD_BIT_RATE} $f.mp4 "
+        "</dev/null >$f.log 2>&1 & echo $! > $f.pid; "
+        "sleep 0.5; if [ -d /proc/$! ]; then echo started; else echo failed; cat $f.log; rm -f $f.pid; fi"
+    )
+    output = shell(adb, serial, [script]).decode("utf-8", "replace").strip()
+    if output == "running":
+        raise ControlError("a screen recording is already running")
+    if output != "started":
+        detail = output.removeprefix("failed").strip().splitlines()
+        raise ControlError("screenrecord failed to start" + (f": {detail[-1][:160]}" if detail else ""))
+
+
+def mp4_boxes(data: bytes, start: int, end: int):
+    while start + 8 <= end:
+        size, kind = struct.unpack(">I4s", data[start:start + 8])
+        header = 8
+        if size == 1 and start + 16 <= end:
+            size, header = struct.unpack(">Q", data[start + 8:start + 16])[0], 16
+        elif size == 0:
+            size = end - start
+        if size < header or start + size > end:
+            return
+        yield kind, start + header, start + size
+        start += size
+
+
+def mp4_duration(video: bytes) -> float | None:
+    """Read the movie length from moov/mvhd."""
+    for kind, start, end in mp4_boxes(video, 0, len(video)):
+        if kind != b"moov":
+            continue
+        for child, body, child_end in mp4_boxes(video, start, end):
+            if child != b"mvhd" or child_end - body < 32:
+                continue
+            if video[body] == 1:
+                timescale, duration = struct.unpack(">IQ", video[body + 20:body + 32])
+            else:
+                timescale, duration = struct.unpack(">II", video[body + 12:body + 20])
+            return round(duration / timescale, 2) if timescale else None
+    return None
+
+
+def stop_screen_record(adb: Adb, serial: str) -> tuple[bytes, float | None]:
+    """Stop the recording (or collect one that hit its time limit); return MP4 and seconds."""
+    script = (
+        f"f={RECORD_PATH}; [ -f $f.pid ] || {{ echo none; exit 0; }}; p=$(cat $f.pid); "
+        # SIGINT lets screenrecord finish the MP4 before exiting.
+        "if grep -q screenrecord /proc/$p/cmdline 2>/dev/null; then kill -INT $p; i=0; "
+        "while [ -d /proc/$p ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
+        "echo stopped; cat $f.mp4 2>/dev/null; rm -f $f.mp4 $f.pid $f.log"
+    )
+    output = adb.run(["exec-out", script], serial=serial, timeout=max(adb.timeout, 300))
+    line, _, video = output.partition(b"\n")
+    if line.strip() == b"none":
+        raise ControlError("no screen recording is running")
+    if line.strip() != b"stopped":
+        raise ControlError("screen recording status is invalid")
+    if video[4:8] != b"ftyp":
+        raise ControlError("screen recording produced no valid MP4")
+    return video, mp4_duration(video)
+
+
 def parse_packages(output: str) -> list[str]:
     return [line[8:].strip() for line in output.splitlines() if line.startswith("package:")]
 
@@ -507,7 +586,7 @@ def validate_action_args(args: argparse.Namespace) -> None:
         require(args.target, "--target")
     for field in required:
         require(getattr(args, field), "--" + field.replace("_", "-"))
-    optional_fields = {"output", "format", "force_restart", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url"}
+    optional_fields = {"output", "format", "force_restart", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url", "time_limit"}
     extras = [field for field in optional_fields - ACTION_FIELDS[args.action] if getattr(args, field) is not None]
     if extras:
         flags = ", ".join("--" + field.replace("_", "-") for field in sorted(extras))
@@ -591,6 +670,15 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
             raise ControlError("resolved package name is invalid")
         shell(adb, serial, ["am", "force-stop", package])
         return {"target": serial, "action": action, "package": package}
+    elif action == "start-screen-record":
+        start_screen_record(adb, serial, args.time_limit)
+        return {"target": serial, "action": action, "time_limit": args.time_limit}
+    elif action == "stop-screen-record":
+        video, seconds = stop_screen_record(adb, serial)
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(video)
+        return {"target": serial, "path": str(output), "bytes": len(video), "seconds": seconds}
     elif action == "open-url":
         parsed = urlsplit(args.url)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
@@ -624,6 +712,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--key", choices=sorted(KEY_MAP))
     parser.add_argument("--name")
     parser.add_argument("--url")
+    parser.add_argument("--time-limit", type=int, help=f"recording seconds, 1-{MAX_RECORD_SECONDS}")
     return parser
 
 
@@ -641,6 +730,12 @@ def prepare_action(args: argparse.Namespace) -> None:
         screenshot_region(args.x1, args.y1, args.x2, args.y2)
     if args.action in {"swipe", "long-press"} and args.duration is None:
         args.duration = 1000 if args.action == "long-press" else 300
+    if args.time_limit is not None and not 1 <= args.time_limit <= MAX_RECORD_SECONDS:
+        raise ControlError(f"--time-limit must be between 1 and {MAX_RECORD_SECONDS} seconds")
+    if args.action == "start-screen-record" and args.time_limit is None:
+        args.time_limit = MAX_RECORD_SECONDS
+    if args.action == "stop-screen-record" and args.output is None:
+        args.output = "android-screen.mp4"
     if args.action == "screenshot" and args.output is None:
         args.output = "android-screen.png"
 

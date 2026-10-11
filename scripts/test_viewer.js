@@ -7,7 +7,8 @@ const vm = require('node:vm');
 const html = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
 let config;
 vm.runInNewContext(html.match(/<script>\s*([\s\S]*?)<\/script>/)[1], {
-  Vue: {createApp(value) { config = value; return {mount() {}}; }}
+  Vue: {createApp(value) { config = value; return {mount() {}}; }},
+  setTimeout, clearTimeout, setInterval, clearInterval
 });
 const app = {...config.data()};
 for (const [name, method] of Object.entries(config.methods)) app[name] = method.bind(app);
@@ -88,3 +89,25 @@ assert.equal(app.screens['device-b'].width, 1080);
 assert.equal(app.numeric({anyOf: [{type: 'integer'}, {type: 'null'}]}), true);
 assert.deepEqual({...app.argumentsFor({inputSchema: {properties: {x1: {anyOf: [{type: 'integer'}, {type: 'null'}]}}}}, {x1: '108'})}, {x1: 108});
 console.log('Passed: crops overlay the full screenshot, map clicks to full-screen coordinates, and are replaced by full screenshots.');
+
+// Recording: a REC badge while running, then a playable MP4 panel.
+const started = {type: 'recording', state: 'started', target: 'device-c', started_at: new Date().toISOString(), time_limit: 30};
+app.applyViewerEvent(started);
+assert.equal(app.activeRecordings['device-c'].time_limit, 30);
+app.applyViewerEvent({type: 'recording', state: 'stopped', target: 'device-c', revision: 3, seconds: 4.58, bytes: 1200000, captured_at: new Date().toISOString()});
+assert.equal(app.activeRecordings['device-c'], undefined);
+assert.equal(app.recordings['device-c'].url, '/api/viewer/recording?target=device-c&revision=3');
+assert.match(app.recordingLabel('device-c'), /^4\.6 s · 1\.2 MB · /);
+app.applyViewerEvent({type: 'cleared', target: 'device-c', kind: 'recording'});
+assert.equal(app.recordings['device-c'], undefined);
+
+// A failed stop clears the badge without a video; reconnect skips recordings past their limit.
+app.applyViewerEvent(started);
+app.applyViewerEvent({type: 'recording', state: 'idle', target: 'device-c'});
+assert.equal(app.activeRecordings['device-c'], undefined);
+app.applyViewerEvent({type: 'state', screenshots: [], descriptions: [], recordings: [{target: 'device-c', revision: 4, seconds: 1, bytes: 1}], active_recordings: [{...started, started_at: '2000-01-01T00:00:00Z'}]});
+assert.equal(app.recordings['device-c'].revision, 4);
+assert.match(app.recordingLabel('device-c'), /^1\.0 s · 1 KB · /);
+assert.equal(app.activeRecordings['device-c'], undefined);
+for (const timer of Object.values(app.recordingTimers)) clearTimeout(timer);
+console.log('Passed: recordings show a REC badge while running and a playable MP4 when stopped.');

@@ -11,20 +11,21 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlencode
 
 if __package__:
     from .android_core import (
         SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
         action_args, advertised_server_url, capture_screen, clear_server_file,
         description_elements, execute, resolve_adb, resolve_serial,
-        screenshot_region, write_server_file,
+        screenshot_region, stop_screen_record, write_server_file,
     )
 else:
     from android_core import (
         SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
         action_args, advertised_server_url, capture_screen, clear_server_file,
         description_elements, execute, resolve_adb, resolve_serial,
-        screenshot_region, write_server_file,
+        screenshot_region, stop_screen_record, write_server_file,
     )
 
 
@@ -43,6 +44,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         ) from None
 
     resolved_adb = resolve_adb(adb_path)
+    server_url = advertised_server_url(host, port)
     web_root = Path(__file__).resolve().parent.parent / "web"
     history: deque[dict[str, object]] = deque(maxlen=100)
     viewer_lock = threading.Lock()
@@ -51,6 +53,9 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     screenshot_revision = 0
     latest_screenshots: dict[str, dict[str, object]] = {}
     latest_crops: dict[str, dict[str, object]] = {}
+    recording_revision = 0
+    latest_recordings: dict[str, dict[str, object]] = {}
+    active_recordings: dict[str, dict[str, object]] = {}
     # Lets /api/tools/call learn which screenshot its own tool call cached.
     tool_capture: contextvars.ContextVar[dict[str, object] | None] = contextvars.ContextVar(
         "tool_capture", default=None,
@@ -126,7 +131,10 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return metadata
 
     def viewer_metadata(entry: dict[str, object]) -> dict[str, object]:
-        return {key: value for key, value in entry.items() if key != "png"}
+        return {key: value for key, value in entry.items() if key not in ("png", "mp4")}
+
+    def recording_url(target: str, revision: int) -> str:
+        return server_url + "/api/viewer/recording?" + urlencode({"target": target, "revision": revision})
 
     def cache_description(target: str, elements: list[dict[str, object]]) -> None:
         description = {
@@ -274,6 +282,58 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Open an absolute HTTP or HTTPS URL on the device."""
         return call("open-url", url=url, target=target)  # type: ignore[return-value]
 
+    @server.tool(name="start_screen_record")
+    def start_screen_record_tool(
+        time_limit: int = 180, target: str | None = None,
+    ) -> dict[str, object]:
+        """Start recording the screen in the background for up to time_limit seconds (1-180).
+
+        Keep using other tools meanwhile; call stop_screen_record to finish and get the MP4.
+        """
+        result = call("start-screen-record", time_limit=time_limit, target=target)
+        recording = {
+            "target": result["target"],  # type: ignore[index]
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "time_limit": time_limit,
+        }
+        with viewer_lock:
+            active_recordings[recording["target"]] = recording
+        publish("recording", state="started", **recording)
+        return result  # type: ignore[return-value]
+
+    @server.tool(name="stop_screen_record")
+    def stop_screen_record_tool(target: str | None = None) -> dict[str, object]:
+        """Stop the screen recording; return its length, size, and an MP4 download url."""
+        nonlocal recording_revision
+        selected = target
+        try:
+            adb = Adb(resolved_adb, timeout)
+            selected = resolve_serial(adb, target)
+            video, seconds = stop_screen_record(adb, selected)
+        except ControlError as error:
+            if selected:
+                with viewer_lock:
+                    active_recordings.pop(selected, None)
+                publish("recording", state="idle", target=selected)
+            record("stop-screen-record", {"target": selected}, False, str(error))
+            raise ToolError(str(error)) from None
+        with viewer_lock:
+            recording_revision += 1
+            entry: dict[str, object] = {
+                "revision": recording_revision,
+                "target": selected,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "seconds": seconds,
+                "bytes": len(video),
+                "mp4": video,
+            }
+            latest_recordings[selected] = entry
+            active_recordings.pop(selected, None)
+            metadata = viewer_metadata(entry)
+        publish("recording", state="stopped", **metadata)
+        record("stop-screen-record", {"target": selected}, True)
+        return {**metadata, "url": recording_url(selected, int(metadata["revision"]))}
+
     @server.custom_route("/", methods=["GET"])
     async def dashboard(_request: Request) -> Response:
         return FileResponse(web_root / "index.html", media_type="text/html")
@@ -337,6 +397,20 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             },
         )
 
+    @server.custom_route("/api/viewer/recording", methods=["GET"])
+    async def dashboard_recording(request: Request) -> Response:
+        requested_target = request.query_params.get("target")
+        requested_revision = request.query_params.get("revision")
+        with viewer_lock:
+            recording = latest_recordings.get(requested_target or "")
+        if recording is None or str(recording["revision"]) != requested_revision:
+            return JSONResponse(
+                {"ok": False, "error": "recording is not available"}, status_code=404,
+            )
+        return Response(
+            recording["mp4"], media_type="video/mp4", headers={"Cache-Control": "no-store"},
+        )
+
     @server.custom_route("/api/viewer/cache", methods=["DELETE"])
     async def dashboard_clear_cache(request: Request) -> Response:
         try:
@@ -345,15 +419,17 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
         target = payload.get("target") if isinstance(payload, dict) else None
         kind = payload.get("kind") if isinstance(payload, dict) else None
-        if not isinstance(target, str) or not target or kind not in ("screenshot", "description"):
+        if not isinstance(target, str) or not target or kind not in ("screenshot", "description", "recording"):
             return JSONResponse(
-                {"ok": False, "error": "target and kind (screenshot or description) are required"},
+                {"ok": False, "error": "target and kind (screenshot, description, or recording) are required"},
                 status_code=400,
             )
         with viewer_lock:
             if kind == "screenshot":
                 latest_screenshots.pop(target, None)
                 latest_crops.pop(target, None)
+            elif kind == "recording":
+                latest_recordings.pop(target, None)
             else:
                 latest_descriptions.pop(target, None)
         publish("cleared", target=target, kind=kind)
@@ -379,6 +455,8 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
                     "screenshots": [viewer_metadata(entry) for entry in latest_screenshots.values()],
                     "crops": [viewer_metadata(entry) for entry in latest_crops.values()],
                     "descriptions": list(latest_descriptions.values()),
+                    "recordings": [viewer_metadata(entry) for entry in latest_recordings.values()],
+                    "active_recordings": list(active_recordings.values()),
                 }
             yield "event: viewer\ndata: " + json.dumps(initial, ensure_ascii=False) + "\n\n"
             idle = 0
@@ -451,7 +529,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         finally:
             tool_capture.reset(token)
 
-    write_server_file(advertised_server_url(host, port))
+    write_server_file(server_url)
     try:
         app = server.streamable_http_app(host=host)
         config = uvicorn.Config(
