@@ -232,6 +232,24 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         publish("gesture", gesture="multi_touch", target=result["target"], fingers=fingers, duration=duration)
         return result
 
+    def zoom(action: str, x: int, y: int, distance: int, duration: int, target: str | None) -> dict[str, object]:
+        result = call(action, x=x, y=y, distance=distance, duration=duration, target=target)
+        publish("gesture", gesture="multi_touch", target=result["target"],
+                fingers=result["fingers"], duration=duration)
+        return result
+
+    @server.tool(name="zoom_in")
+    def zoom_in_tool(x: int, y: int, distance: int = 150, duration: int = 500,
+                     target: str | None = None) -> dict[str, object]:
+        """Pinch out around x,y. Distance is each finger's movement in pixels; endpoints must fit the display."""
+        return zoom("zoom-in", x, y, distance, duration, target)
+
+    @server.tool(name="zoom_out")
+    def zoom_out_tool(x: int, y: int, distance: int = 150, duration: int = 500,
+                      target: str | None = None) -> dict[str, object]:
+        """Pinch in around x,y. Distance is each finger's movement in pixels; endpoints must fit the display."""
+        return zoom("zoom-out", x, y, distance, duration, target)
+
     @server.tool(name="long_press")
     def long_press_tool(
         x: int, y: int, duration: int = 1000, target: str | None = None,

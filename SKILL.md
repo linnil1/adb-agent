@@ -30,6 +30,7 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 | `tap` | `--x INT --y INT` | none |
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` (default 300) |
 | `multi-touch` | `--fingers JSON` | `--duration INT` (default 300, range 1-3000) |
+| `zoom-in`, `zoom-out` | `--x INT --y INT` center | `--distance INT` (default 150); `--duration INT` (default 500, range 1-3000) |
 | `long-press` | `--x INT --y INT` | `--duration INT` (default 1000) |
 | `type-text` | `--text STRING` | none |
 | `press-key` | `--key home\|back\|up\|down\|left\|right\|tab\|enter\|delete\|recents` | none |
@@ -50,6 +51,8 @@ Screenshot regions require all four coordinates, with exclusive `x2,y2`, matchin
 ## Multi-touch and pinch-to-zoom
 
 `--fingers`: JSON array of 2-10 paths, each exactly `{"x1":INT,"y1":INT,"x2":INT,"y2":INT}`, moving simultaneously from start to end along straight lines. Coordinates: 0-65535, within the display. MCP `fingers` takes the array directly. Requires shell input injection; the bundled ADB helper needs no APK or root.
+
+Zoom `distance` is each finger's travel in pixels: offsets from the center are 100 → 100+distance for zoom-in, reversed for zoom-out. Out-of-screen endpoints are rejected. Verify screenshots; slow pinches may be ignored by the app.
 
 ## Recording
 

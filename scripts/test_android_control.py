@@ -95,6 +95,45 @@ class AndroidControlTests(unittest.TestCase):
             with self.assertRaises(android.ControlError):
                 android.prepare_action(android.action_args("multi-touch", fingers=[valid, valid], duration=duration))
 
+    def test_zoom_distance_and_reverse_paths(self):
+        inward = android.zoom_paths("zoom-in", 500, 900, 150, 1080, 1920)
+        self.assertEqual(inward, [
+            {"x1": 400, "y1": 900, "x2": 250, "y2": 900},
+            {"x1": 600, "y1": 900, "x2": 750, "y2": 900},
+        ])
+        outward = android.zoom_paths("zoom-out", 500, 900, 150, 1080, 1920)
+        for start, reverse in zip(inward, outward):
+            self.assertEqual(start["x1"], reverse["x2"])
+            self.assertEqual(start["x2"], reverse["x1"])
+        for action in ("zoom-in", "zoom-out"):
+            args = android.action_args(action, x=500, y=900)
+            android.prepare_action(args)
+            self.assertEqual((args.distance, args.duration), (150, 500))
+        for x, y, distance in ((249, 900, 150), (830, 900, 150), (500, 1920, 150), (500, 900, 500)):
+            with self.assertRaises(android.ControlError):
+                android.zoom_paths("zoom-in", x, y, distance, 1080, 1920)
+
+    def test_zoom_validation_and_bounds_before_injection(self):
+        for values in ({"distance": 0}, {"distance": -1}, {"duration": 0},
+                       {"duration": 3001}, {"x": 65536}, {"y": -1}):
+            with self.subTest(values=values), self.assertRaises(android.ControlError):
+                args = android.action_args("zoom-in", **({"x": 500, "y": 900} | values))
+                android.prepare_action(args)
+        args = android.action_args("zoom-in", x=500, y=900, target="device-a")
+        android.prepare_action(args)
+        adb = self.fake_adb(("device-a", "device"))
+        with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
+             patch("scripts.android_core.inject_multi_touch") as inject:
+            result = android.device_action(args, adb)
+            inject.assert_called_once_with(adb, "device-a", result["fingers"], 500)
+            self.assertEqual(result["action"], "zoom-in")
+        args.x = 50
+        with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
+             patch("scripts.android_core.inject_multi_touch") as inject:
+            with self.assertRaises(android.ControlError):
+                android.device_action(args, adb)
+            inject.assert_not_called()
+
     def test_direct_cli_entrypoint_loads_split_modules(self):
         result = subprocess.run(
             [sys.executable, str(MODULE_PATH), "--help"],

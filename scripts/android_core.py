@@ -22,7 +22,7 @@ ACTIONS = (
     "list-targets", "set-default-target", "status", "list-packages", "current-focus",
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
-    "start-screen-record", "stop-screen-record", "multi-touch",
+    "start-screen-record", "stop-screen-record", "multi-touch", "zoom-in", "zoom-out",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -31,6 +31,8 @@ ACTION_FIELDS = {
     "describe-screen": {"format"}, "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
     "multi-touch": {"fingers", "duration"},
+    "zoom-in": {"x", "y", "distance", "duration"},
+    "zoom-out": {"x", "y", "distance", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
     "press-key": {"key"}, "home": set(), "back": set(),
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
@@ -574,6 +576,8 @@ def require(value: object, flag: str) -> object:
 
 def validate_action_args(args: argparse.Namespace) -> None:
     required = {
+        "zoom-in": ("x", "y"),
+        "zoom-out": ("x", "y"),
         "multi-touch": ("fingers",),
         "tap": ("x", "y"),
         "swipe": ("x1", "y1", "x2", "y2"),
@@ -595,6 +599,25 @@ def validate_action_args(args: argparse.Namespace) -> None:
     if extras:
         flags = ", ".join("--" + field.replace("_", "-") for field in sorted(extras))
         raise ControlError(f"argument(s) not valid for {args.action}: {flags}")
+
+
+def zoom_paths(action: str, x: int, y: int, distance: int, width: int, height: int) -> list[dict[str, int]]:
+    near, far = 100, 100 + distance
+    if not (0 <= x - far and x + far < width and 0 <= y < height):
+        raise ControlError("zoom gesture exceeds the display; move its center or reduce --distance")
+    start, end = (near, far) if action == "zoom-in" else (far, near)
+    return [{"x1": x + sign * start, "y1": y, "x2": x + sign * end, "y2": y}
+            for sign in (-1, 1)]
+
+
+def inject_multi_touch(adb: Adb, serial: str, fingers: list[dict[str, int]], duration: int) -> None:
+    helper = Path(__file__).with_name("multitouch") / "multitouch.dex"
+    if not helper.is_file():
+        raise ControlError("multi-touch helper missing; run python3 scripts/multitouch/build.py")
+    remote = "/data/local/tmp/android-control-multitouch.dex"
+    adb.run(["push", str(helper), remote], serial=serial)
+    coordinates = [str(finger[key]) for finger in fingers for key in ("x1", "y1", "x2", "y2")]
+    shell(adb, serial, [f"CLASSPATH={remote}", "app_process", "/", "MultiTouch", str(duration), *coordinates])
 
 
 def device_action(args: argparse.Namespace, adb: Adb) -> object:
@@ -648,14 +671,14 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         shell(adb, serial, ["input", "swipe", str(args.x1), str(args.y1), str(args.x2), str(args.y2), str(args.duration)])
         return {"target": serial, "action": action, "from": [args.x1, args.y1], "to": [args.x2, args.y2], "duration_ms": args.duration}
     elif action == "multi-touch":
-        helper = Path(__file__).with_name("multitouch") / "multitouch.dex"
-        if not helper.is_file():
-            raise ControlError("multi-touch helper missing; run python3 scripts/multitouch/build.py")
-        remote = "/data/local/tmp/android-control-multitouch.dex"
-        adb.run(["push", str(helper), remote], serial=serial)
-        coordinates = [str(finger[key]) for finger in args.fingers for key in ("x1", "y1", "x2", "y2")]
-        shell(adb, serial, [f"CLASSPATH={remote}", "app_process", "/", "MultiTouch", str(args.duration), *coordinates])
+        inject_multi_touch(adb, serial, args.fingers, args.duration)
         return {"target": serial, "action": action, "fingers": args.fingers, "duration_ms": args.duration}
+    elif action in {"zoom-in", "zoom-out"}:
+        _, screen = capture_screen(adb, serial)
+        fingers = zoom_paths(action, args.x, args.y, args.distance, *screen)
+        inject_multi_touch(adb, serial, fingers, args.duration)
+        return {"target": serial, "action": action, "center": [args.x, args.y],
+                "distance": args.distance, "fingers": fingers, "duration_ms": args.duration}
     elif action == "long-press":
         shell(adb, serial, ["input", "swipe", str(args.x), str(args.y), str(args.x), str(args.y), str(args.duration)])
         return {"target": serial, "action": action, "point": [args.x, args.y], "duration_ms": args.duration}
@@ -721,6 +744,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--x2", type=int)
     parser.add_argument("--y2", type=int)
     parser.add_argument("--duration", type=int)
+    parser.add_argument("--distance", type=int, help="zoom movement per finger in pixels (default 150)")
     parser.add_argument("--fingers", help='JSON array of 2-10 {"x1":0,"y1":0,"x2":100,"y2":100} finger paths')
     parser.add_argument("--text")
     parser.add_argument("--key", choices=sorted(KEY_MAP))
@@ -744,6 +768,17 @@ def prepare_action(args: argparse.Namespace) -> None:
         screenshot_region(args.x1, args.y1, args.x2, args.y2)
     if args.action in {"swipe", "long-press", "multi-touch"} and args.duration is None:
         args.duration = 1000 if args.action == "long-press" else 300
+    if args.action in {"zoom-in", "zoom-out"}:
+        if args.distance is None:
+            args.distance = 150
+        if args.duration is None:
+            args.duration = 500
+        if not 1 <= args.distance <= 65535:
+            raise ControlError("--distance must be between 1 and 65535 pixels")
+        if not 1 <= args.duration <= 3000:
+            raise ControlError("zoom duration must be between 1 and 3000 ms")
+        if args.x > 65535 or args.y > 65535:
+            raise ControlError("zoom coordinates must be between 0 and 65535")
     if args.action == "multi-touch":
         if isinstance(args.fingers, str):
             try:
