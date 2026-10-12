@@ -581,6 +581,8 @@ def validate_action_args(args: argparse.Namespace) -> None:
         "launch-app": ("name",),
         "force-stop-app": ("name",),
         "open-url": ("url",),
+        # Required so a recording always ends, even if the connection drops.
+        "start-screen-record": ("time_limit",),
     }.get(args.action, ())
     if args.action == "set-default-target":
         require(args.target, "--target")
@@ -732,8 +734,6 @@ def prepare_action(args: argparse.Namespace) -> None:
         args.duration = 1000 if args.action == "long-press" else 300
     if args.time_limit is not None and not 1 <= args.time_limit <= MAX_RECORD_SECONDS:
         raise ControlError(f"--time-limit must be between 1 and {MAX_RECORD_SECONDS} seconds")
-    if args.action == "start-screen-record" and args.time_limit is None:
-        args.time_limit = MAX_RECORD_SECONDS
     if args.action == "stop-screen-record" and args.output is None:
         args.output = "android-screen.mp4"
     if args.action == "screenshot" and args.output is None:

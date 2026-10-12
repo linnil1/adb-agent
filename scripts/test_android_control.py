@@ -461,9 +461,8 @@ class AndroidControlTests(unittest.TestCase):
             android.device_action(args, FakeAdb())
 
     def test_recording_arguments(self):
-        start = android.action_args("start-screen-record")
-        android.prepare_action(start)
-        self.assertEqual(start.time_limit, android.MAX_RECORD_SECONDS)
+        with self.assertRaisesRegex(android.ControlError, "--time-limit is required"):
+            android.prepare_action(android.action_args("start-screen-record"))
         stop = android.action_args("stop-screen-record")
         android.prepare_action(stop)
         self.assertEqual(stop.output, "android-screen.mp4")

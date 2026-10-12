@@ -284,11 +284,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.tool(name="start_screen_record")
     def start_screen_record_tool(
-        time_limit: int = 180, target: str | None = None,
+        time_limit: int, target: str | None = None,
     ) -> dict[str, object]:
-        """Start recording the screen in the background for up to time_limit seconds (1-180).
+        """Start recording the screen in the background; it ends after time_limit seconds (1-180).
 
-        Keep using other tools meanwhile; call stop_screen_record to finish and get the MP4.
+        time_limit is required so the recording ends even if the connection drops. Keep
+        using other tools meanwhile; call stop_screen_record to finish early and get the MP4.
         """
         result = call("start-screen-record", time_limit=time_limit, target=target)
         recording = {

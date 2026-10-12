@@ -29,7 +29,7 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `launch-app` | Launch an installed package, optionally forcing a restart. |
 | `force-stop-app` | Force-stop an installed package. |
 | `open-url` | Open an HTTP or HTTPS URL on the device. |
-| `start-screen-record` | Start a background screen recording, up to 180 seconds. |
+| `start-screen-record` | Start a background screen recording with a required time limit (1-180 seconds). |
 | `stop-screen-record` | Stop the recording and save the MP4. |
 
 ## Streamable HTTP MCP
