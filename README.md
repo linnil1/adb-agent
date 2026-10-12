@@ -21,6 +21,7 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `describe-screen` | Return parsed accessibility elements or the original UI XML. |
 | `tap` | Tap one screen coordinate. |
 | `swipe` | Swipe between two coordinates. |
+| `multi-touch` | Move 2-10 fingers together for pinch/zoom or multi-finger swipes. |
 | `long-press` | Hold one screen coordinate. |
 | `type-text` | Enter text through Android input. |
 | `press-key` | Send navigation, editing, Enter, Home, Back, or Recents keys. |
@@ -86,6 +87,8 @@ interactive mode ─────────→ 1-second per-target captures + m
 ```
 
 Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP. On desktop, each device workspace has a maximum height of 900 px, with command history scrolling inside it.
+
+Multi-touch uses a bundled Android helper run over ADB; no APK installation or root is needed. See [the skill's multi-touch schema](SKILL.md#multi-touch-and-pinch-to-zoom) for CLI and MCP usage. In dashboard interactive mode, use two fingers or hold **Alt** while dragging with a mouse: the second finger mirrors the first around the screen center. Gestures replay along straight paths when all fingers lift, with a maximum duration of three seconds. Restart an existing MCP server to register the new `multi_touch` tool.
 
 A region screenshot is drawn at its position over the dimmed last full screenshot, outlined, until the next full screenshot replaces it; without a full screenshot it is placed on a blank screen of the reported size. Description overlays, gesture animations, and interactive input keep using full-screen device coordinates.
 

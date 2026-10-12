@@ -223,6 +223,15 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         )
         return result  # type: ignore[return-value]
 
+    @server.tool(name="multi_touch")
+    def multi_touch_tool(
+        fingers: list[dict[str, int]], duration: int = 300, target: str | None = None,
+    ) -> dict[str, object]:
+        """Move 2-10 fingers simultaneously. Each path has x1,y1,x2,y2 device pixels; duration is 1-3000 ms. Supports pinch, zoom, and multi-finger swipes."""
+        result = call("multi-touch", fingers=fingers, duration=duration, target=target)
+        publish("gesture", gesture="multi_touch", target=result["target"], fingers=fingers, duration=duration)
+        return result
+
     @server.tool(name="long_press")
     def long_press_tool(
         x: int, y: int, duration: int = 1000, target: str | None = None,

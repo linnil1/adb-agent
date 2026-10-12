@@ -111,3 +111,55 @@ assert.match(app.recordingLabel('device-c'), /^1\.0 s · 1 KB · /);
 assert.equal(app.activeRecordings['device-c'], undefined);
 for (const timer of Object.values(app.recordingTimers)) clearTimeout(timer);
 console.log('Passed: recordings show a REC badge while running and a playable MP4 when stopped.');
+
+// Multi-touch keeps both contacts and submits once, after the final release.
+app.applyViewerEvent({type: 'screenshot', target: 'device-b', revision: 20, interactive: false});
+app.screenLoaded('device-b', full);
+app.panels['device-b'] = {interactive: true, pointer: null};
+const calls = [];
+app.queueInteractiveCall = (target, name, args) => calls.push({target, name, args});
+const phone = {querySelector: () => surface, focus() {}, setPointerCapture() {}};
+const pointer = (id, x, y, extra = {}) => ({pointerId: id, pointerType: 'touch',
+  currentTarget: phone, clientX: x, clientY: y, preventDefault() {}, ...extra});
+app.pointerDown('device-b', pointer(1, 100, 200));
+app.pointerDown('device-b', pointer(2, 300, 200));
+app.pointerMove('device-b', pointer(1, 50, 200));
+app.pointerUp('device-b', pointer(1, 50, 200));
+assert.equal(calls.length, 0);
+app.pointerUp('device-b', pointer(2, 350, 200));
+assert.equal(calls.length, 1);
+assert.equal(calls[0].name, 'multi_touch');
+assert.equal(JSON.stringify(calls[0].args.fingers), JSON.stringify([
+  {x1: 200, y1: 400, x2: 100, y2: 400},
+  {x1: 600, y1: 400, x2: 700, y2: 400}
+]));
+app.pointerUp('device-b', pointer(2, 350, 200));
+assert.equal(calls.length, 1);
+
+// Cancelled gestures send no commands, including after the other finger lifts.
+app.pointerDown('device-b', pointer(1, 100, 200));
+app.pointerDown('device-b', pointer(2, 300, 200));
+app.pointerCancel('device-b');
+app.pointerUp('device-b', pointer(2, 350, 200));
+assert.equal(calls.length, 1);
+
+// Alt-mouse drag mirrors a second finger around the screen's center.
+app.pointerDown('device-b', pointer(3, 100, 200, {pointerType: 'mouse', button: 0, altKey: true}));
+app.pointerUp('device-b', pointer(3, 50, 200, {pointerType: 'mouse'}));
+assert.equal(calls[1].name, 'multi_touch');
+const [first, second] = calls[1].args.fingers;
+assert.equal(first.x1 + second.x1, 1079);
+assert.equal(first.y2 + second.y2, 1919);
+
+// Ordinary clicks and swipes retain their existing tools.
+app.pointerDown('device-b', pointer(4, 100, 200));
+app.pointerUp('device-b', pointer(4, 100, 200));
+assert.equal(calls[2].name, 'tap');
+app.pointerDown('device-b', pointer(5, 100, 200));
+app.pointerUp('device-b', pointer(5, 200, 200));
+assert.equal(calls[3].name, 'swipe');
+app.showGesture({target: 'device-b', gesture: 'multi_touch', fingers: calls[0].args.fingers, duration: 300});
+assert.equal(app.screens['device-b'].effect.fingers.length, 2);
+const arrayTool = {inputSchema: {properties: {fingers: {type: 'array'}}}};
+assert.equal(JSON.stringify(app.argumentsFor(arrayTool, {fingers: JSON.stringify(calls[0].args.fingers)}).fingers), JSON.stringify(calls[0].args.fingers));
+console.log('Passed: multi-touch batching, cancellation, Alt-drag, JSON tool fields, and single-touch compatibility.');

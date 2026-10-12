@@ -132,7 +132,7 @@
               </button>
               <span v-if="activeRecordings[viewerTarget]" class="rec-badge" title="Screen recording in progress">● REC</span>
             </div>
-            <div class="phone" :class="{interactive: panels[viewerTarget].interactive}" :tabindex="panels[viewerTarget].interactive ? 0 : -1" :aria-label="`Interactive screen for ${targetLabel(viewerTarget)}`" @pointerdown="pointerDown(viewerTarget, $event)" @pointerup="pointerUp(viewerTarget, $event)" @pointercancel="pointerCancel(viewerTarget)" @keydown="interactiveKey(viewerTarget, $event)">
+            <div class="phone" :class="{interactive: panels[viewerTarget].interactive}" :tabindex="panels[viewerTarget].interactive ? 0 : -1" :aria-label="`Interactive screen for ${targetLabel(viewerTarget)}`" @pointerdown="pointerDown(viewerTarget, $event)" @pointermove="pointerMove(viewerTarget, $event)" @pointerup="pointerUp(viewerTarget, $event)" @pointercancel="pointerCancel(viewerTarget)" @keydown="interactiveKey(viewerTarget, $event)">
               <img v-if="screenFor(viewerTarget).url" :key="screenFor(viewerTarget).imageKey" :src="screenFor(viewerTarget).url" class="screen-surface" :class="{'screen-enter': screenFor(viewerTarget).animated, dimmed: screenFor(viewerTarget).crop}" @load="screenLoaded(viewerTarget, $event)" @error="screenError(viewerTarget)">
               <div v-else-if="screenFor(viewerTarget).crop || screenFor(viewerTarget).descriptionElements.length" class="description-placeholder screen-surface" :style="{'--screen-ratio': screenFor(viewerTarget).width / screenFor(viewerTarget).height}"></div>
               <div v-else class="empty">Run describe_screen or screenshot to view this device.</div>
@@ -146,6 +146,9 @@
               <div v-if="screenFor(viewerTarget).effect?.type === 'tap'" :key="screenFor(viewerTarget).effect.id" class="tap-pulse" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%'}"></div>
               <svg v-if="screenFor(viewerTarget).effect?.type === 'swipe'" :key="screenFor(viewerTarget).effect.id" class="swipe-line" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <line :x1="screenFor(viewerTarget).effect.x1" :y1="screenFor(viewerTarget).effect.y1" :x2="screenFor(viewerTarget).effect.x2" :y2="screenFor(viewerTarget).effect.y2" :style="{animationDuration: screenFor(viewerTarget).effect.duration + 'ms, ' + (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></line>
+              </svg>
+              <svg v-if="screenFor(viewerTarget).effect?.type === 'multi_touch'" :key="screenFor(viewerTarget).effect.id" class="swipe-line" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <line v-for="(finger, index) in screenFor(viewerTarget).effect.fingers" :key="index" :x1="finger.x1" :y1="finger.y1" :x2="finger.x2" :y2="finger.y2" :style="{animationDuration: screenFor(viewerTarget).effect.duration + 'ms, ' + (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></line>
               </svg>
               <div v-if="screenFor(viewerTarget).effect?.type === 'long_press'" :key="screenFor(viewerTarget).effect.id" class="long-press-ring" :style="{left: screenFor(viewerTarget).effect.x + '%', top: screenFor(viewerTarget).effect.y + '%', animationDuration: (screenFor(viewerTarget).effect.duration + 250) + 'ms'}"></div>
             </div>
@@ -175,7 +178,7 @@
               <button :disabled="panels[viewerTarget].busy || !selectedToolFor(viewerTarget)">Run {{ panels[viewerTarget].selectedToolName }}</button>
             </form>
             <div class="status" :class="{error: panels[viewerTarget].error || panels[viewerTarget].interactiveError}">{{ panels[viewerTarget].error || panels[viewerTarget].interactiveError || panels[viewerTarget].status }}</div>
-            <div v-if="panels[viewerTarget].interactive" class="interactive-help">Click, drag, or hold the screen. Focus it to type; Enter, Backspace, Escape, Tab, Home, and arrow keys are supported.</div>
+            <div v-if="panels[viewerTarget].interactive" class="interactive-help">Click, drag, or hold the screen. Use two fingers, or Alt-drag with a mouse for pinch/zoom. Gestures replay when all fingers lift. Focus it to type; Enter, Backspace, Escape, Tab, Home, and arrow keys are supported.</div>
             <pre v-if="panels[viewerTarget].resultText" class="result">{{ panels[viewerTarget].resultText }}</pre>
           </section>
 
@@ -305,7 +308,9 @@ createApp({
       const schema = tool?.inputSchema || {}, result = {};
       for (const [name, value] of Object.entries(values)) {
         if (value === '' || value === null || value === undefined) continue;
-        result[name] = this.numeric(schema.properties?.[name] || {}) ? Number(value) : value;
+        const field = schema.properties?.[name] || {};
+        result[name] = this.numeric(field) ? Number(value) :
+          (['array', 'object'].includes(field.type) && typeof value === 'string' ? JSON.parse(value) : value);
       }
       if (target && schema.properties?.target && result.target === undefined) result.target = target;
       return result;
@@ -470,16 +475,42 @@ createApp({
       event.preventDefault();
       event.currentTarget.focus();
       event.currentTarget.setPointerCapture?.(event.pointerId);
-      panel.pointer = {...point, startedAt: Date.now(), pointerId: event.pointerId};
+      if (!panel.pointer) panel.pointer = {startedAt: Date.now(), contacts: {}, mirrored: event.pointerType === 'mouse' && event.altKey};
+      const gesture = panel.pointer;
+      if (Object.keys(gesture.contacts).length >= 10) return;
+      gesture.contacts[event.pointerId] = {start: point, end: point, active: true};
+    },
+    pointerMove(target, event) {
+      const contact = this.panels[target]?.pointer?.contacts[event.pointerId];
+      if (!contact?.active) return;
+      const point = this.screenPoint(target, event);
+      if (point) contact.end = point;
+      event.preventDefault();
     },
     pointerUp(target, event) {
-      const panel = this.panels[target], start = panel?.pointer;
-      if (!panel?.interactive || !start || start.pointerId !== event.pointerId) return;
+      const panel = this.panels[target], gesture = panel?.pointer;
+      const contact = gesture?.contacts[event.pointerId];
+      if (!panel?.interactive || !contact?.active) return;
       const end = this.screenPoint(target, event);
-      panel.pointer = null;
-      if (!end) return;
+      if (!end) { panel.pointer = null; return; }
       event.preventDefault();
-      const elapsed = Math.max(1, Date.now() - start.startedAt);
+      contact.end = end;
+      contact.active = false;
+      const contacts = Object.values(gesture.contacts);
+      if (contacts.some(item => item.active)) return;
+      panel.pointer = null;
+      const elapsed = Math.max(1, Date.now() - gesture.startedAt);
+      if (contacts.length > 1 || gesture.mirrored) {
+        const fingers = contacts.map(({start, end}) => ({x1: start.x, y1: start.y, x2: end.x, y2: end.y}));
+        if (gesture.mirrored && contacts.length === 1) {
+          const screen = this.screenFor(target), first = fingers[0];
+          fingers.push({x1: screen.width - 1 - first.x1, y1: screen.height - 1 - first.y1,
+            x2: screen.width - 1 - first.x2, y2: screen.height - 1 - first.y2});
+        }
+        this.queueInteractiveCall(target, 'multi_touch', {fingers, duration: Math.max(100, Math.min(3000, elapsed))});
+        return;
+      }
+      const start = contact.start;
       const movement = Math.hypot(end.clientX - start.clientX, end.clientY - start.clientY);
       if (elapsed >= 550 && movement < 10) {
         this.queueInteractiveCall(target, 'long_press', {x: start.x, y: start.y, duration: Math.min(3000, elapsed)});
@@ -567,6 +598,9 @@ createApp({
       let effect;
       if (event.gesture === 'tap') {
         effect = {type: 'tap', id: ++this.effectId, x: xp(event.x), y: yp(event.y)};
+      } else if (event.gesture === 'multi_touch') {
+        effect = {type: 'multi_touch', id: ++this.effectId, duration,
+          fingers: event.fingers.map(finger => ({x1: xp(finger.x1), y1: yp(finger.y1), x2: xp(finger.x2), y2: yp(finger.y2)}))};
       } else if (event.gesture === 'swipe') {
         effect = {
           type: 'swipe', id: ++this.effectId,

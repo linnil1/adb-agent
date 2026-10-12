@@ -1,112 +1,73 @@
 ---
 name: android-device-control
-description: Inspect and operate an authorized Android phone or emulator through ADB, directly or through Streamable HTTP MCP. Use for device status, packages, focused activities, screenshots, UI hierarchy, input, navigation, app launch or force-stop, and web URLs. Do not use for bypassing device security, anti-detection, account farming, or devices the user does not own or administer.
+description: Inspect and control an authorized Android phone or emulator over ADB through the local CLI or MCP, including screenshots, UI elements, input, multi-touch, apps, and recording.
 ---
 
 # Android Device Control
 
-Use `scripts/android_control.py` for supported operations. It accepts named arguments. Successful actions emit JSON and identify devices as `target`; errors go to stderr.
-
-## Safety
-
-Operate only devices the user owns or administers. Stay within the requested task and confirm before consequential actions such as purchases, messages, data deletion, security changes, or publishing content.
-
-Preserve the current app session during ordinary automation. Do not relaunch or force-restart an app when navigation can continue from its current state. Use `launch-app --force-restart` only when the user requests a clean start or the app is stuck.
-
-## Workflow
-
-1. Run `python3 scripts/android_control.py --action list-targets`.
-2. If one ready device exists, omit `--target`. If several exist, use `--target TARGET` for that call. Use `set-default-target` to remember a ready target for one hour; ordinary `--target` calls never change that default.
-3. Inspect the current state with `status`, `current-focus`, `screenshot`, or `describe-screen` as appropriate.
-4. Use the `center` coordinates from `describe-screen` for `tap`, `swipe`, or `long-press`.
-5. Inspect the result after navigation or another state-changing action.
-
-Stop rather than guess when the intended target or consequential UI control is ambiguous.
-
-## CLI schema
-
-Run an action with:
+Use the local tool:
 
 ```bash
-python3 scripts/android_control.py --action ACTION [--target TARGET] [action arguments]
+python3 scripts/android_control.py --action ACTION [--target TARGET] [arguments]
 ```
 
-Global action options:
+Results are JSON; device identifiers use `target`. Errors go to stderr. MCP tool names replace CLI hyphens with underscores; `home/back` become `press_home/press_back`.
 
-| Argument | Type | Meaning |
+Run `list-targets` first. Omit `--target` with one ready device; specify it with several. `set-default-target` remembers a target for one hour; other calls never change it. Preserve the current app session; use `--force-restart` only for a requested clean start or a stuck app.
+
+## Arguments
+
+Global options: `--target TARGET`, `--timeout SECONDS` (default 30), `--adb PATH`, `--direct`. The last two bypass local server discovery. CLI calls otherwise forward to a verified local server when available. If a forwarded action fails, do not retry a mutating action directly.
+
+Pass only arguments for the selected action. Coordinates and durations are non-negative integers in device pixels and milliseconds.
+
+| Action | Required arguments | Optional arguments |
 |---|---|---|
-| `--target TARGET` | string | Select the device for this call. |
-| `--adb PATH` | path | Explicit ADB executable; also bypasses MCP discovery. |
-| `--timeout SECONDS` | positive number | Timeout in seconds; default `30`. |
-| `--direct` | flag | Bypass a discovered local MCP server. |
+| `list-targets`, `status`, `list-packages`, `current-focus`, `home`, `back` | none | none |
+| `set-default-target` | `--target TARGET` | none |
+| `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
+| `describe-screen` | none | `--format json\|original` (default `json`) |
+| `tap` | `--x INT --y INT` | none |
+| `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` (default 300) |
+| `multi-touch` | `--fingers JSON` | `--duration INT` (default 300, range 1-3000) |
+| `long-press` | `--x INT --y INT` | `--duration INT` (default 1000) |
+| `type-text` | `--text STRING` | none |
+| `press-key` | `--key home\|back\|up\|down\|left\|right\|tab\|enter\|delete\|recents` | none |
+| `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` |
+| `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none |
+| `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
+| `start-screen-record` | `--time-limit SECONDS` (1-180) | none |
+| `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) |
 
-Action arguments:
+## Screen inspection
 
-| Action | Required arguments | Optional arguments | Summary |
-|---|---|---|---|
-| `list-targets` | none | none | List connected devices and their states. |
-| `set-default-target` | `--target TARGET` | none | Remember one ready target for one hour. |
-| `status` | none | none | Report device, Android, and battery status. |
-| `list-packages` | none | none | List installed packages. |
-| `current-focus` | none | none | Report the focused activity. |
-| `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region | Save a validated PNG of the screen or one region. |
-| `describe-screen` | none | `--format json\|original` (default `json`) | Return accessibility elements or raw UI XML. |
-| `tap` | `--x INT --y INT` | none | Tap one coordinate. |
-| `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` ms (default `300`) | Swipe between two coordinates. |
-| `long-press` | `--x INT --y INT` | `--duration INT` ms (default `1000`) | Hold one coordinate. |
-| `type-text` | `--text STRING` | none | Enter text. |
-| `press-key` | `--key home\|back\|up\|down\|left\|right\|tab\|enter\|delete\|recents` | none | Send a named Android key. |
-| `home` | none | none | Navigate home. |
-| `back` | none | none | Navigate back. |
-| `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` | Launch an installed app. |
-| `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none | Force-stop an installed app. |
-| `open-url` | `--url HTTP_OR_HTTPS_URL` | none | Open a web URL. |
-| `start-screen-record` | `--time-limit SECONDS` (1-180) | none | Start recording the screen in the background. |
-| `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) | Stop the recording and save the MP4. |
+`describe-screen` returns elements with `label`, `text`, `description`, `bounds`, `center`, `class`, `package`, and `states`. Use `center` for taps and `bounds` for screenshot regions. `--format original` returns raw XML in `xml`.
 
-Coordinates and durations must be non-negative integers. Do not pass arguments unrelated to the selected action.
+Screenshot regions require all four coordinates, with exclusive `x2,y2`, matching element bounds. Prefer regions for small areas: only their screen rows are transferred, gzip-compressed. Regions require Android toybox's `od`, `tail`, `head`, and `gzip`.
 
-## Screenshot regions
+`uiautomator` can omit WebView, canvas, video, and accessibility-hidden content; use screenshots when the hierarchy is incomplete.
 
-Pass all of `--x1 --y1 --x2 --y2` (MCP: `x1, y1, x2, y2`) to capture only that rectangle. Coordinates are device pixels; `x2` and `y2` are exclusive, matching `describe-screen` `bounds`, so an element's bounds can be passed directly. The region must fit the screen.
+## Multi-touch and pinch-to-zoom
 
-Prefer a region when only part of the screen matters: the phone sends just those rows, gzip-compressed, so the image is smaller and usually faster to fetch than a full screenshot. Narrow but tall regions save less, because whole rows are transferred. Regions need the `od`, `tail`, `head`, and `gzip` commands of Android's built-in toybox.
+`--fingers`: JSON array of 2-10 paths, each exactly `{"x1":INT,"y1":INT,"x2":INT,"y2":INT}`, moving simultaneously from start to end along straight lines. Coordinates: 0-65535, within the display. MCP `fingers` takes the array directly. Requires shell input injection; the bundled ADB helper needs no APK or root.
 
-## Screen recording
+## Recording
 
-Run `start-screen-record --time-limit SECONDS`, perform the steps to capture with the other actions, then run `stop-screen-record`. The recording runs on the device, so start and stop may be separate calls; one recording runs per device at a time. The time limit is required and should cover only the planned steps: the recording keeps running on the device if the connection drops, and stops by itself at the limit. `stop-screen-record` still collects it afterward, but starting a new recording first discards it.
+Start with a required time limit, then call `stop-screen-record` to collect the MP4. Recording survives a disconnected client and stops at its limit. One recording runs per device; starting another discards the previous recording, even if it has finished. Results include `seconds`.
 
-Recordings are H.264 MP4 at the screen's aspect ratio, at most 1280 px on the long side, 4 Mbit/s. Long recordings over a slow wireless connection take a while to download. The result reports `seconds` from the MP4 header. Through MCP, `stop_screen_record` returns a `url` for the MP4 instead of the video data.
+## Other tool behavior
 
-## Screen descriptions
+- `type-text` converts literal `%s` into a space.
+- App fragments match package names, not localized launcher labels.
+- ADB discovery checks `ADB_PATH`, `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, and common SDK locations including `~/android-sdk/platform-tools/adb`.
+- For unsupported operations, use ADB with an explicit `-s TARGET`.
 
-Use the default JSON format for automation. Each element includes `label`, `text`, decoded `description`, `bounds`, `center`, `class`, `package`, and a `states` list. States can include `clickable`, `selected`, `scrollable`, `enabled`, `checked`, and `focusable`. Prefer visible text or descriptions over unlabeled clickable nodes.
+## MCP
 
-Use `--format original` only when parsed JSON omits information needed for the task; it returns the raw `uiautomator` XML in `xml`.
-
-## MCP mode
-
-Start the same actions as MCP tools over Streamable HTTP with:
+Install `requirements-mcp.txt`, then run:
 
 ```bash
 python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
 ```
 
-| Option | Meaning |
-|---|---|
-| `--host HOST` | Bind host; default `127.0.0.1`. |
-| `--port PORT` | Bind port; default `8000`. |
-
-MCP mode requires `requirements-mcp.txt` and defaults to `127.0.0.1:8000/mcp`. Ordinary CLI calls automatically use a verified local server when one is discoverable, keeping its viewer synchronized. Use `--direct` when direct ADB execution is specifically required. If a verified server accepts a request and then fails, report the failure; do not retry a mutating action directly.
-
-## Direct ADB fallback
-
-ADB discovery checks `ADB_PATH`, `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, common SDK locations, and `~/android-sdk/platform-tools/adb`. Pair or connect wireless devices with ADB before using this skill.
-
-If an operation has no matching action, use ADB directly. Resolve the intended target first, pass it with `adb -s TARGET`, avoid interpolated shell commands, and retain the same authorization and confirmation boundaries.
-
-## Limitations
-
-- Android `input text` converts a literal `%s` sequence into a space.
-- `uiautomator` can omit WebView, canvas, video, and accessibility-hidden content; compare with a screenshot when the hierarchy is incomplete.
-- App-name fragments match package names, not localized launcher labels. Use the exact package when matching is ambiguous.
+Defaults: `127.0.0.1:8000`; Streamable HTTP at `/mcp`, dashboard at `/`. MCP arguments omit CLI `--` prefixes; screenshot returns an image and stopped recording returns a video URL.

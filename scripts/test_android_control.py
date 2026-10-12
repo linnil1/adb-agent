@@ -54,6 +54,47 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(android.shell_quote("it's"), "'it'\\''s'")
         self.assertEqual(android.shell_quote("a&b"), "'a&b'")
 
+    def test_multi_touch_validation_and_device_command(self):
+        fingers = [
+            {"x1": 100, "y1": 200, "x2": 50, "y2": 200},
+            {"x1": 300, "y1": 200, "x2": 350, "y2": 200},
+        ]
+        args = android.action_args("multi-touch", fingers=fingers, target="device-a")
+        android.prepare_action(args)
+        self.assertEqual(args.duration, 300)
+        self.assertEqual(args.fingers, fingers)
+        adb = self.fake_adb(("device-a", "device"))
+        commands = []
+        original = adb.run
+
+        def run(command, **kwargs):
+            if command == ["devices", "-l"]:
+                return original(command, **kwargs)
+            commands.append((command, kwargs))
+            return b""
+        adb.run = run
+        result = android.device_action(args, adb)
+        self.assertEqual(result["fingers"], fingers)
+        self.assertEqual(commands[0][0][0], "push")
+        self.assertEqual(commands[1][0], [
+            "shell", "CLASSPATH=/data/local/tmp/android-control-multitouch.dex",
+            "app_process", "/", "MultiTouch", "300",
+            "100", "200", "50", "200", "300", "200", "350", "200",
+        ])
+        self.assertTrue(all(kwargs["serial"] == "device-a" for _, kwargs in commands))
+
+    def test_multi_touch_rejects_invalid_paths(self):
+        valid = {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
+        for fingers in ("no json", [], [valid], [valid] * 11,
+                        [valid, {"x1": 0}], [valid, dict(valid, x1=-1)],
+                        [valid, dict(valid, x1=True)], [valid, dict(valid, x1=1.5)],
+                        [valid, dict(valid, x1=65536)]):
+            with self.subTest(fingers=fingers), self.assertRaises(android.ControlError):
+                android.prepare_action(android.action_args("multi-touch", fingers=fingers))
+        for duration in (0, 3001):
+            with self.assertRaises(android.ControlError):
+                android.prepare_action(android.action_args("multi-touch", fingers=[valid, valid], duration=duration))
+
     def test_direct_cli_entrypoint_loads_split_modules(self):
         result = subprocess.run(
             [sys.executable, str(MODULE_PATH), "--help"],

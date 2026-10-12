@@ -22,7 +22,7 @@ ACTIONS = (
     "list-targets", "set-default-target", "status", "list-packages", "current-focus",
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
-    "start-screen-record", "stop-screen-record",
+    "start-screen-record", "stop-screen-record", "multi-touch",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -30,6 +30,7 @@ ACTION_FIELDS = {
     "screenshot": {"output", "x1", "y1", "x2", "y2"},
     "describe-screen": {"format"}, "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
+    "multi-touch": {"fingers", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
     "press-key": {"key"}, "home": set(), "back": set(),
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
@@ -573,6 +574,7 @@ def require(value: object, flag: str) -> object:
 
 def validate_action_args(args: argparse.Namespace) -> None:
     required = {
+        "multi-touch": ("fingers",),
         "tap": ("x", "y"),
         "swipe": ("x1", "y1", "x2", "y2"),
         "long-press": ("x", "y"),
@@ -588,7 +590,7 @@ def validate_action_args(args: argparse.Namespace) -> None:
         require(args.target, "--target")
     for field in required:
         require(getattr(args, field), "--" + field.replace("_", "-"))
-    optional_fields = {"output", "format", "force_restart", "x", "y", "x1", "y1", "x2", "y2", "duration", "text", "key", "name", "url", "time_limit"}
+    optional_fields = set().union(*ACTION_FIELDS.values())
     extras = [field for field in optional_fields - ACTION_FIELDS[args.action] if getattr(args, field) is not None]
     if extras:
         flags = ", ".join("--" + field.replace("_", "-") for field in sorted(extras))
@@ -645,6 +647,15 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
     elif action == "swipe":
         shell(adb, serial, ["input", "swipe", str(args.x1), str(args.y1), str(args.x2), str(args.y2), str(args.duration)])
         return {"target": serial, "action": action, "from": [args.x1, args.y1], "to": [args.x2, args.y2], "duration_ms": args.duration}
+    elif action == "multi-touch":
+        helper = Path(__file__).with_name("multitouch") / "multitouch.dex"
+        if not helper.is_file():
+            raise ControlError("multi-touch helper missing; run python3 scripts/multitouch/build.py")
+        remote = "/data/local/tmp/android-control-multitouch.dex"
+        adb.run(["push", str(helper), remote], serial=serial)
+        coordinates = [str(finger[key]) for finger in args.fingers for key in ("x1", "y1", "x2", "y2")]
+        shell(adb, serial, [f"CLASSPATH={remote}", "app_process", "/", "MultiTouch", str(args.duration), *coordinates])
+        return {"target": serial, "action": action, "fingers": args.fingers, "duration_ms": args.duration}
     elif action == "long-press":
         shell(adb, serial, ["input", "swipe", str(args.x), str(args.y), str(args.x), str(args.y), str(args.duration)])
         return {"target": serial, "action": action, "point": [args.x, args.y], "duration_ms": args.duration}
@@ -710,6 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--x2", type=int)
     parser.add_argument("--y2", type=int)
     parser.add_argument("--duration", type=int)
+    parser.add_argument("--fingers", help='JSON array of 2-10 {"x1":0,"y1":0,"x2":100,"y2":100} finger paths')
     parser.add_argument("--text")
     parser.add_argument("--key", choices=sorted(KEY_MAP))
     parser.add_argument("--name")
@@ -730,8 +742,23 @@ def prepare_action(args: argparse.Namespace) -> None:
     validate_action_args(args)
     if args.action == "screenshot":
         screenshot_region(args.x1, args.y1, args.x2, args.y2)
-    if args.action in {"swipe", "long-press"} and args.duration is None:
+    if args.action in {"swipe", "long-press", "multi-touch"} and args.duration is None:
         args.duration = 1000 if args.action == "long-press" else 300
+    if args.action == "multi-touch":
+        if isinstance(args.fingers, str):
+            try:
+                args.fingers = json.loads(args.fingers)
+            except json.JSONDecodeError:
+                raise ControlError("--fingers must be a JSON array") from None
+        if not isinstance(args.fingers, list) or not 2 <= len(args.fingers) <= 10:
+            raise ControlError("--fingers must contain 2-10 finger paths")
+        for finger in args.fingers:
+            if not isinstance(finger, dict) or set(finger) != {"x1", "y1", "x2", "y2"}:
+                raise ControlError("each finger needs exactly x1, y1, x2, y2")
+            if any(type(value) is not int or not 0 <= value <= 65535 for value in finger.values()):
+                raise ControlError("finger coordinates must be integers between 0 and 65535")
+        if not 1 <= args.duration <= 3000:
+            raise ControlError("multi-touch duration must be between 1 and 3000 ms")
     if args.time_limit is not None and not 1 <= args.time_limit <= MAX_RECORD_SECONDS:
         raise ControlError(f"--time-limit must be between 1 and {MAX_RECORD_SECONDS} seconds")
     if args.action == "stop-screen-record" and args.output is None:
@@ -756,5 +783,5 @@ def action_args(action: str, *, adb_path: str | None = None, timeout: float = DE
             if value:
                 argv.append("--" + name.replace("_", "-"))
         elif value is not None:
-            argv += ["--" + name.replace("_", "-"), str(value)]
+            argv += ["--" + name.replace("_", "-"), json.dumps(value) if isinstance(value, (list, dict)) else str(value)]
     return build_parser().parse_args(argv)
