@@ -1,6 +1,6 @@
 ---
 name: android-device-control
-description: Inspect and control an authorized Android phone or emulator over ADB through the local CLI or MCP, including screenshots, UI elements, input, multi-touch, apps, and recording.
+description: Inspect and control an authorized Android phone or emulator over ADB through the local CLI or MCP, including screenshots, UI elements, input, multi-touch, apps, recording, and logs.
 ---
 
 # Android Device Control
@@ -39,6 +39,8 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
 | `start-screen-record` | `--time-limit SECONDS` (1-180) | none |
 | `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) |
+| `logs`, `crash-logs` | none | `--name PACKAGE_OR_FRAGMENT --priority V\|D\|I\|W\|E\|F --match TEXT --lines INT --output PATH` |
+| `clear-logs` | none | none |
 
 ## Screen inspection
 
@@ -64,6 +66,12 @@ Start with a required time limit, then call `stop-screen-record` to collect the 
 - App fragments match package names, not localized launcher labels.
 - ADB discovery checks `ADB_PATH`, `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, and common SDK locations including `~/android-sdk/platform-tools/adb`.
 - For unsupported operations, use ADB with an explicit `-s TARGET`.
+
+## Logs
+
+`logs` reads main/system/crash buffers; `--name` selects current app processes (including `:service` children), failing if none run. `crash-logs` reads retained crashes and can match an exited app by its exact package. Priority is a minimum (default V); match is literal. Crash filters preserve matching report context.
+
+Results include `text`, `line_count`, `matched_lines`, `pids`, and truncation flags. Defaults: 200 lines; maximum 5000 lines/256 KiB, scanning the latest 4 MiB. Limits can cut stack traces; `scan_truncated` means older captured bytes were discarded. An empty capture doesn't prove no crash occurred. CLI `--output` saves the same bounded text locally. Only `clear-logs` clears main/system/crash buffers.
 
 ## MCP
 

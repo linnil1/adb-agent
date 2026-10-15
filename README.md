@@ -33,6 +33,18 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `open-url` | Open an HTTP or HTTPS URL on the device. |
 | `start-screen-record` | Start a background screen recording with a required time limit (1-180 seconds). |
 | `stop-screen-record` | Stop the recording and save the MP4. |
+| `logs` | Capture recent device or running-app logs, with priority/text filters. |
+| `crash-logs` | Capture retained crash reports, including exited apps. |
+| `clear-logs` | Explicitly clear main, system, and crash log buffers. |
+
+Log capture returns bounded text and metadata; it never clears buffers. For example:
+
+```bash
+python3 scripts/android_control.py --action logs --name com.example.app --priority W --lines 200
+python3 scripts/android_control.py --action crash-logs --name com.example.app --output crash.log
+```
+
+`--match` is a literal text filter. Crash filters select reports with their stack context; line/byte limits may cut a report and set `truncated`. App logs resolve currently running package processes; crash matching also works after the app exits. Output defaults to 200 physical lines, at most 5000 lines/256 KiB; capture retains the latest 4 MiB before filtering and reports `scan_truncated` if older bytes were discarded. The CLI saves `--output` on the client machine even when forwarded through the server. MCP exposes `logs`, `crash_logs`, and `clear_logs`.
 
 ## Streamable HTTP MCP
 
@@ -114,6 +126,7 @@ MIT. See [LICENSE](LICENSE).
 ## Tests
 
 ```bash
-python3 -m unittest scripts/test_android_control.py
+python3 -m unittest scripts/test_android_control.py scripts/test_android_logs.py
+node scripts/test_viewer.js
 python3 scripts/android_control.py --action list-targets
 ```

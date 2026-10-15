@@ -13,12 +13,12 @@ from urllib.parse import urlencode, urlsplit
 if __package__:
     from .android_core import (
         ACTION_FIELDS, PNG_MAGIC, SERVER_API_VERSION, SERVER_NAME, ControlError,
-        clear_server_file, prepare_action, server_file,
+        clear_server_file, prepare_action, save_log_output, server_file,
     )
 else:
     from android_core import (
         ACTION_FIELDS, PNG_MAGIC, SERVER_API_VERSION, SERVER_NAME, ControlError,
-        clear_server_file, prepare_action, server_file,
+        clear_server_file, prepare_action, save_log_output, server_file,
     )
 
 
@@ -143,6 +143,8 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         return structured["result"]
     if structured is None:
         raise ControlError("local MCP server omitted structured tool output")
+    if args.action in {"logs", "crash-logs"}:
+        return save_log_output(structured, args.output)
     if args.action == "stop-screen-record":
         url = structured.get("url") if isinstance(structured, dict) else None
         if not isinstance(url, str) or not url.startswith(server_url + "/"):

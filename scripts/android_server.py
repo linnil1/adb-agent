@@ -309,6 +309,25 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Open an absolute HTTP or HTTPS URL on the device."""
         return call("open-url", url=url, target=target)  # type: ignore[return-value]
 
+    @server.tool(name="logs")
+    def logs_tool(name: str | None = None, priority: Literal["V", "D", "I", "W", "E", "F"] = "V",
+                  match: str | None = None, lines: int = 200,
+                  target: str | None = None) -> dict[str, object]:
+        """Capture recent logcat text without clearing it. Optional name selects a running app's processes; match is literal. Output is limited to lines (1-5000) and 256 KiB."""
+        return call("logs", name=name, priority=priority, match=match, lines=lines, target=target)
+
+    @server.tool(name="crash_logs")
+    def crash_logs_tool(name: str | None = None, priority: Literal["V", "D", "I", "W", "E", "F"] = "V",
+                        match: str | None = None, lines: int = 200,
+                        target: str | None = None) -> dict[str, object]:
+        """Capture retained crash reports, including exited apps. Package/text filters keep report context; output limits may cut a report (truncated=true)."""
+        return call("crash-logs", name=name, priority=priority, match=match, lines=lines, target=target)
+
+    @server.tool(name="clear_logs")
+    def clear_logs_tool(target: str | None = None) -> dict[str, object]:
+        """Explicitly clear the device's main, system, and crash logcat buffers."""
+        return call("clear-logs", target=target)
+
     @server.tool(name="start_screen_record")
     def start_screen_record_tool(
         time_limit: int, target: str | None = None,

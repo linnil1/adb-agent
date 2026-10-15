@@ -7,6 +7,7 @@ import html
 import json
 import os
 import re
+import selectors
 import shutil
 import signal
 import struct
@@ -23,6 +24,7 @@ ACTIONS = (
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom-in", "zoom-out",
+    "logs", "crash-logs", "clear-logs",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -38,6 +40,9 @@ ACTION_FIELDS = {
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
     "open-url": {"url"},
     "start-screen-record": {"time_limit"}, "stop-screen-record": {"output"},
+    "logs": {"name", "priority", "match", "lines", "output"},
+    "crash-logs": {"name", "priority", "match", "lines", "output"},
+    "clear-logs": set(),
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
@@ -62,6 +67,12 @@ SERVER_FILE_ENV = "ANDROID_CONTROL_SERVER_FILE"
 SERVER_NAME = "android-device-control"
 SERVER_API_VERSION = 2
 _package_cache: dict[str, tuple[float, list[str]]] = {}
+LOG_SCAN_BYTES = 4 * 1024 * 1024
+LOG_OUTPUT_BYTES = 256 * 1024
+LOG_PRIORITIES = "VDIWEF"
+LOG_LINE_RE = re.compile(
+    r"^\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:]+): ?(.*)$"
+)
 
 
 class ControlError(RuntimeError):
@@ -134,6 +145,53 @@ def run_process(argv: list[str], timeout: float) -> bytes:
     return stdout
 
 
+def run_process_tail(argv: list[str], timeout: float, limit: int) -> tuple[bytes, bool]:
+    """Drain both pipes, retaining only the latest limit bytes of stdout."""
+    process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    output, errors = bytearray(), bytearray()
+    truncated = False
+    deadline = time.monotonic() + timeout
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ, True)
+            selector.register(process.stderr, selectors.EVENT_READ, False)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                for key, _ in selector.select(remaining):
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                    elif key.data:
+                        output.extend(chunk)
+                        if len(output) > limit:
+                            del output[:len(output) - limit]
+                            truncated = True
+                    elif len(errors) < 4096:
+                        errors.extend(chunk[:4096 - len(errors)])
+            process.wait(timeout=max(0.001, deadline - time.monotonic()))
+    except BaseException as error:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        if isinstance(error, subprocess.TimeoutExpired):
+            raise ControlError(f"adb timed out after {timeout:g}s") from None
+        raise
+    finally:
+        process.stdout.close()
+        process.stderr.close()
+    if process.returncode:
+        raise ControlError(scrub_error(bytes(errors), process.returncode))
+    # A retained tail may begin midway through a UTF-8 character or log line.
+    if truncated:
+        _, _, output = output.partition(b"\n")
+    return bytes(output), truncated
+
+
 class Adb:
     def __init__(self, executable: str, timeout: float):
         self.executable = executable
@@ -148,6 +206,10 @@ class Adb:
             validate_serial(serial)
             argv += ["-s", serial]
         return run_process(argv + args, timeout or self.timeout)
+
+    def run_tail(self, args: list[str], *, serial: str) -> tuple[bytes, bool]:
+        validate_serial(serial)
+        return run_process_tail([self.executable, "-s", serial, *args], self.timeout, LOG_SCAN_BYTES)
 
 
 def validate_serial(serial: str) -> None:
@@ -568,6 +630,115 @@ def resolve_package(adb: Adb, serial: str, query: str) -> str:
     raise ControlError(f"ambiguous app name {query!r}: {', '.join(matches[:5])}")
 
 
+def parse_log_entries(text: str) -> list[dict]:
+    entries: list[dict] = []
+    for line in text.splitlines():
+        match = LOG_LINE_RE.match(line)
+        if match:
+            pid, tid, priority, tag, message = match.groups()
+            entries.append({"pid": int(pid), "tid": int(tid), "priority": priority,
+                            "tag": tag.strip(), "message": message, "lines": [line]})
+        elif entries and not line.startswith("---------"):
+            entries[-1]["lines"].append(line)
+            entries[-1]["message"] += "\n" + line
+    return entries
+
+
+def crash_reports(entries: list[dict]) -> list[list[dict]]:
+    """Keep each emitter's crash together, including interleaved stack traces."""
+    reports: list[list[dict]] = []
+    active: dict[tuple, list[dict]] = {}
+    for entry in entries:
+        key = (entry["pid"], entry["tid"], entry["tag"])
+        if key not in active or entry["message"].startswith(("FATAL EXCEPTION:", "*** *** ***")):
+            active[key] = []
+            reports.append(active[key])
+        active[key].append(entry)
+    return reports
+
+
+def filter_log_text(text: str, *, crash: bool, package: str | None, pids: list[int],
+                    priority: str, match: str | None, lines: int,
+                    byte_limit: int = LOG_OUTPUT_BYTES) -> dict[str, object]:
+    entries = parse_log_entries(text)
+    threshold = LOG_PRIORITIES.index(priority)
+    if crash:
+        package_pattern = re.compile(
+            r"(?:Process: |Cmdline: |>>> )" + re.escape(package) + r"(?::[^\s,<>]+)?(?=[\s,]|$)"
+        ) if package else None
+        selected = []
+        for report in crash_reports(entries):
+            messages = "\n".join(entry["message"] for entry in report)
+            if package_pattern and not package_pattern.search(messages):
+                continue
+            if match is not None and match not in messages:
+                continue
+            if not any(LOG_PRIORITIES.index(entry["priority"]) >= threshold for entry in report):
+                continue
+            selected.extend(report)
+        # Restore buffer order after collecting interleaved reports.
+        chosen = {id(entry) for entry in selected}
+        selected = [entry for entry in entries if id(entry) in chosen]
+    else:
+        selected = [entry for entry in entries
+                    if (not package or entry["pid"] in pids)
+                    and LOG_PRIORITIES.index(entry["priority"]) >= threshold
+                    and (match is None or match in entry["message"] or match in entry["tag"])]
+    rendered = [line for entry in selected for line in entry["lines"]]
+    matched_lines = len(rendered)
+    rendered = rendered[-lines:]
+    encoded = ("\n".join(rendered) + ("\n" if rendered else "")).encode("utf-8")
+    truncated = matched_lines > lines
+    if len(encoded) > byte_limit:
+        encoded = encoded[-byte_limit:]
+        _, _, encoded = encoded.partition(b"\n")
+        truncated = True
+    return {"text": encoded.decode("utf-8"), "line_count": len(encoded.splitlines()),
+            "matched_lines": matched_lines, "truncated": truncated}
+
+
+def save_log_output(result: dict[str, object], output: str | None) -> dict[str, object]:
+    if output is not None:
+        path = Path(output).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(result["text"], encoding="utf-8")
+        result = {**result, "path": str(path)}
+    return result
+
+
+def capture_logs(adb: Adb, serial: str, args: argparse.Namespace) -> dict[str, object]:
+    crash = args.action == "crash-logs"
+    package = None
+    pids: list[int] = []
+    if args.name:
+        package = args.name if PACKAGE_RE.fullmatch(args.name) else resolve_package(adb, serial, args.name)
+        if not crash:
+            processes = shell(adb, serial, ["ps", "-A", "-o", "PID,NAME"]).decode("utf-8", "replace")
+            for line in processes.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and (
+                    parts[1] == package or parts[1].startswith(package + ":")
+                ):
+                    pids.append(int(parts[0]))
+            if not pids:
+                raise ControlError(f"app is not running: {package}; use crash-logs for earlier crashes")
+    buffers = "crash" if crash else "main,system,crash"
+    command = ["logcat", "-d", "-b", buffers, "-v", "threadtime"]
+    if len(pids) == 1:
+        command += [f"--pid={pids[0]}"]
+    # Filter in Python so crash matching retains the surrounding report.
+    command += ["'*:V'"]
+    raw, scan_truncated = adb.run_tail(command, serial=serial)
+    result = filter_log_text(raw.decode("utf-8", "replace"), crash=crash, package=package,
+                             pids=pids, priority=args.priority, match=args.match, lines=args.lines)
+    result["truncated"] = result["truncated"] or scan_truncated
+    return save_log_output({
+        "target": serial, "action": args.action, "package": package, "pids": pids,
+        "buffers": buffers.split(","), "priority": args.priority, "match": args.match,
+        "line_limit": args.lines, "scan_truncated": scan_truncated, **result,
+    }, args.output)
+
+
 def require(value: object, flag: str) -> object:
     if value is None:
         raise ControlError(f"{flag} is required for this action")
@@ -625,7 +796,12 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
     action = args.action
-    if action == "status":
+    if action in {"logs", "crash-logs"}:
+        return capture_logs(adb, serial, args)
+    elif action == "clear-logs":
+        shell(adb, serial, ["logcat", "-b", "main,system,crash", "-c"])
+        return {"target": serial, "action": action, "buffers": ["main", "system", "crash"]}
+    elif action == "status":
         props = {}
         for key in ("ro.product.model", "ro.product.manufacturer", "ro.build.version.release", "ro.build.version.sdk"):
             try:
@@ -751,6 +927,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--name")
     parser.add_argument("--url")
     parser.add_argument("--time-limit", type=int, help=f"recording seconds, 1-{MAX_RECORD_SECONDS}")
+    parser.add_argument("--priority", choices=list(LOG_PRIORITIES), help="minimum log priority (default V)")
+    parser.add_argument("--match", help="literal log text filter")
+    parser.add_argument("--lines", type=int, help="maximum returned log lines, 1-5000 (default 200)")
     return parser
 
 
@@ -764,6 +943,13 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
     validate_action_args(args)
+    if args.action in {"logs", "crash-logs"}:
+        if args.lines is None:
+            args.lines = 200
+        if not 1 <= args.lines <= 5000:
+            raise ControlError("--lines must be between 1 and 5000")
+        if args.priority is None:
+            args.priority = "V"
     if args.action == "screenshot":
         screenshot_region(args.x1, args.y1, args.x2, args.y2)
     if args.action in {"swipe", "long-press", "multi-touch"} and args.duration is None:
