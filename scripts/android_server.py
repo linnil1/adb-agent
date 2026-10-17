@@ -161,6 +161,27 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Return device state, identity, Android version, and battery details."""
         return call("status", target=target)  # type: ignore[return-value]
 
+    @server.tool(name="screen_status")
+    def screen_status_tool(target: str | None = None) -> dict[str, object]:
+        """Read default-display power, interactive state, logical dimensions, and rotation. Unknown fields are null or unknown."""
+        return call("screen-status", target=target)
+
+    @server.tool(name="wake_screen")
+    def wake_screen_tool(target: str | None = None) -> dict[str, object]:
+        """Wake the screen with KEYCODE_WAKEUP and verify interactive state. The lock screen may remain."""
+        return call("wake-screen", target=target)
+
+    @server.tool(name="sleep_screen")
+    def sleep_screen_tool(target: str | None = None) -> dict[str, object]:
+        """Put the screen to sleep with KEYCODE_SLEEP and verify non-interactive state."""
+        return call("sleep-screen", target=target)
+
+    @server.tool(name="rotate_screen")
+    def rotate_screen_tool(rotation: Literal["0", "90", "180", "270", "auto"],
+                           target: str | None = None) -> dict[str, object]:
+        """Set user rotation in degrees relative to natural orientation, or auto. Returns the applied setting and observed rotation; apps can constrain orientation."""
+        return call("rotate-screen", rotation=rotation, target=target)
+
     @server.tool(name="list_packages")
     def list_packages_tool(target: str | None = None) -> dict[str, object]:
         """List package names currently installed on the device."""

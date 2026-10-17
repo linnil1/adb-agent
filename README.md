@@ -15,6 +15,9 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `list-targets` | List connected ADB devices and their states. |
 | `set-default-target` | Remember one ready target for one hour. |
 | `status` | Report device state, model, Android version, and battery information. |
+| `screen-status` | Read default-display power, interactive state, logical size, and rotation. |
+| `wake-screen` / `sleep-screen` | Explicitly wake/sleep and verify interactivity. |
+| `rotate-screen` | Set `--rotation 0\|90\|180\|270\|auto`, relative to natural orientation. |
 | `list-packages` | List installed application packages. |
 | `current-focus` | Report the activity currently holding window focus. |
 | `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |
@@ -45,6 +48,14 @@ python3 scripts/android_control.py --action crash-logs --name com.example.app --
 ```
 
 `--match` is a literal text filter. Crash filters select reports with their stack context; line/byte limits may cut a report and set `truncated`. App logs resolve currently running package processes; crash matching also works after the app exits. Output defaults to 200 physical lines, at most 5000 lines/256 KiB; capture retains the latest 4 MiB before filtering and reports `scan_truncated` if older bytes were discarded. The CLI saves `--output` on the client machine even when forwarded through the server. MCP exposes `logs`, `crash_logs`, and `clear_logs`.
+
+Screen controls use standard ADB commands and are also available as `screen_status`, `wake_screen`, `sleep_screen`, and `rotate_screen`. Unknown status fields are null/`unknown`. Wake and sleep verify the result for up to five seconds; waking can leave the phone locked. Rotation reports both `setting_applied` and `rotation_matches`, because an app can constrain orientation. For example:
+
+```bash
+python3 scripts/android_control.py --action screen-status
+python3 scripts/android_control.py --action rotate-screen --rotation 90
+python3 scripts/android_control.py --action rotate-screen --rotation auto
+```
 
 ## Streamable HTTP MCP
 
@@ -126,7 +137,7 @@ MIT. See [LICENSE](LICENSE).
 ## Tests
 
 ```bash
-python3 -m unittest scripts/test_android_control.py scripts/test_android_logs.py
+python3 -m unittest scripts/test_android_control.py scripts/test_android_logs.py scripts/test_android_screen.py
 node scripts/test_viewer.js
 python3 scripts/android_control.py --action list-targets
 ```

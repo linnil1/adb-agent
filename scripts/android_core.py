@@ -25,6 +25,7 @@ ACTIONS = (
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom-in", "zoom-out",
     "logs", "crash-logs", "clear-logs",
+    "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -43,6 +44,8 @@ ACTION_FIELDS = {
     "logs": {"name", "priority", "match", "lines", "output"},
     "crash-logs": {"name", "priority", "match", "lines", "output"},
     "clear-logs": set(),
+    "screen-status": set(), "wake-screen": set(), "sleep-screen": set(),
+    "rotate-screen": {"rotation"},
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
@@ -747,6 +750,7 @@ def require(value: object, flag: str) -> object:
 
 def validate_action_args(args: argparse.Namespace) -> None:
     required = {
+        "rotate-screen": ("rotation",),
         "zoom-in": ("x", "y"),
         "zoom-out": ("x", "y"),
         "multi-touch": ("fingers",),
@@ -796,7 +800,15 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
     action = args.action
-    if action in {"logs", "crash-logs"}:
+    if action in {"screen-status", "wake-screen", "sleep-screen", "rotate-screen"}:
+        if __package__:
+            from .android_screen import control_screen, screen_status
+        else:
+            from android_screen import control_screen, screen_status
+        if action == "screen-status":
+            return screen_status(adb, serial)
+        return control_screen(adb, serial, action, args.rotation)
+    elif action in {"logs", "crash-logs"}:
         return capture_logs(adb, serial, args)
     elif action == "clear-logs":
         shell(adb, serial, ["logcat", "-b", "main,system,crash", "-c"])
@@ -930,6 +942,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--priority", choices=list(LOG_PRIORITIES), help="minimum log priority (default V)")
     parser.add_argument("--match", help="literal log text filter")
     parser.add_argument("--lines", type=int, help="maximum returned log lines, 1-5000 (default 200)")
+    parser.add_argument("--rotation", choices=("0", "90", "180", "270", "auto"),
+                        help="rotation relative to natural orientation, or auto")
     return parser
 
 

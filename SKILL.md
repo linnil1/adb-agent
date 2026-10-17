@@ -1,6 +1,6 @@
 ---
 name: android-device-control
-description: Inspect and control an authorized Android phone or emulator over ADB through the local CLI or MCP, including screenshots, UI elements, input, multi-touch, apps, recording, and logs.
+description: Inspect and control an authorized Android phone or emulator over ADB through the local CLI or MCP, including screenshots, screen power/rotation, UI elements, input, multi-touch, apps, recording, and logs.
 ---
 
 # Android Device Control
@@ -25,6 +25,8 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 |---|---|---|
 | `list-targets`, `status`, `list-packages`, `current-focus`, `home`, `back` | none | none |
 | `set-default-target` | `--target TARGET` | none |
+| `screen-status`, `wake-screen`, `sleep-screen` | none | none |
+| `rotate-screen` | `--rotation 0\|90\|180\|270\|auto` | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
 | `tap` | `--x INT --y INT` | none |
@@ -49,6 +51,8 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 Screenshot regions require all four coordinates, with exclusive `x2,y2`, matching element bounds. Prefer regions for small areas: only their screen rows are transferred, gzip-compressed. Regions require Android toybox's `od`, `tail`, `head`, and `gzip`.
 
 `uiautomator` can omit WebView, canvas, video, and accessibility-hidden content; use screenshots when the hierarchy is incomplete.
+
+`screen-status` reads the default display's power, interactivity, logical size, and rotation; unknown fields are null/`unknown`, with read failures in `errors`. Wake/sleep use dedicated keys and verify interactivity within five seconds; waking may leave the lock screen. Rotation angles are relative to natural orientation; `auto` releases the user rotation lock. `setting_applied` confirms the setting, while `rotation_matches` reports whether the display followed it (apps may constrain orientation).
 
 ## Multi-touch and pinch-to-zoom
 
