@@ -66,6 +66,9 @@ BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 KEY_MAP = {
     "home": 3, "back": 4, "up": 19, "down": 20, "left": 21, "right": 22,
     "tab": 61, "enter": 66, "delete": 67, "recents": 187,
+    "volume-up": 24, "volume-down": 25, "volume-mute": 164,
+    "media-play": 126, "media-pause": 127, "media-play-pause": 85,
+    "media-next": 87, "media-previous": 88,
 }
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 RECORD_PATH = "/data/local/tmp/android-control-record"

@@ -134,6 +134,28 @@ class AndroidControlTests(unittest.TestCase):
                 android.device_action(args, adb)
             inject.assert_not_called()
 
+    def test_volume_and_playback_keys_dispatch_without_claiming_verification(self):
+        for key, code in [("volume-up", 24), ("volume-down", 25), ("volume-mute", 164),
+                          ("media-play", 126), ("media-pause", 127), ("media-play-pause", 85),
+                          ("media-next", 87), ("media-previous", 88)]:
+            adb = self.fake_adb(("phone", "device"))
+            commands = []
+            original = adb.run
+
+            def run(args, **kwargs):
+                if args[0] == "shell":
+                    commands.append((args, kwargs))
+                    return b""
+                return original(args, **kwargs)
+
+            adb.run = run
+            args = android.action_args("press-key", key=key, target="phone")
+            android.prepare_action(args)
+            result = android.device_action(args, adb)
+            self.assertNotIn("verified", result)
+            self.assertEqual(commands, [(["shell", "input", "keyevent", str(code)],
+                                         {"serial": "phone", "timeout": None})])
+
     def test_direct_cli_entrypoint_loads_split_modules(self):
         result = subprocess.run(
             [sys.executable, str(MODULE_PATH), "--help"],

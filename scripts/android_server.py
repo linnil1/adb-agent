@@ -364,10 +364,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         key: Literal[
             "home", "back", "up", "down", "left", "right", "tab", "enter",
             "delete", "recents",
+            "volume-up", "volume-down", "volume-mute", "media-play", "media-pause",
+            "media-play-pause", "media-next", "media-previous",
         ],
         target: str | None = None,
     ) -> dict[str, object]:
-        """Press a navigation, editing, enter, home, back, or recents key."""
+        """Send a navigation, editing, volume, or media key. Volume keys follow Android's current context; key dispatch does not verify volume or playback changes."""
         return call("press-key", key=key, target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_home")
