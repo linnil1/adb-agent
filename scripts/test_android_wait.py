@@ -105,6 +105,7 @@ class AndroidWaitTests(unittest.TestCase):
         core.prepare_action(args)
         self.assertEqual((args.state, args.wait_timeout), ("present", 30))
         for values in ({}, {"text": ""}, {"text": "Ready", "description": ""},
+                       {"text": "Ready", "state": "awake"}, {"text": "Ready", "state": "asleep"},
                        *({"text": "Ready", "wait_timeout": timeout} for timeout in (0, -1, 301, float("inf"), float("nan")))):
             with self.subTest(values=values), self.assertRaises(core.ControlError):
                 core.prepare_action(core.action_args("wait-for-ui", **values))

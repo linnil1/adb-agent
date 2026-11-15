@@ -194,15 +194,10 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Read default-display power, interactive state, logical dimensions, and rotation. Unknown fields are null or unknown."""
         return call("screen-status", target=target)
 
-    @server.tool(name="wake_screen")
-    def wake_screen_tool(target: str | None = None) -> dict[str, object]:
-        """Wake the screen with KEYCODE_WAKEUP and verify interactive state. The lock screen may remain."""
-        return call("wake-screen", target=target)
-
-    @server.tool(name="sleep_screen")
-    def sleep_screen_tool(target: str | None = None) -> dict[str, object]:
-        """Put the screen to sleep with KEYCODE_SLEEP and verify non-interactive state."""
-        return call("sleep-screen", target=target)
+    @server.tool(name="set_screen")
+    def set_screen_tool(state: Literal["awake", "asleep"], target: str | None = None) -> dict[str, object]:
+        """Set screen state with explicit wake/sleep keys and verify interactivity. Awake may leave the lock screen in place."""
+        return call("set-screen", state=state, target=target)
 
     @server.tool(name="rotate_screen")
     def rotate_screen_tool(rotation: Literal["0", "90", "180", "270", "auto"],

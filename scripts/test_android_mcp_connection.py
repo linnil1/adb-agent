@@ -122,6 +122,19 @@ else:
             result = self.call("zoom", args)
             self.assertFalse(result.get("ok") and not result.get("result", {}).get("isError"), result)
 
+    def test_set_screen_schema_has_one_tool_with_explicit_state(self):
+        tools = {tool["name"]: tool for tool in self.get("/api/tools")["tools"]}
+        self.assertIn("screen_status", tools)
+        self.assertNotIn("wake_screen", tools)
+        self.assertNotIn("sleep_screen", tools)
+        schema = tools["set_screen"]["inputSchema"]
+        self.assertIn("state", schema["required"])
+        self.assertEqual(schema["properties"]["state"]["enum"], ["awake", "asleep"])
+        for state in (None, "present", "gone", "enabled"):
+            args = {} if state is None else {"state": state}
+            result = self.call("set_screen", args)
+            self.assertFalse(result.get("ok") and not result.get("result", {}).get("isError"), result)
+
     def test_pair_validation_and_adb_errors_never_echo_input_codes(self):
         for args, code in (
             ({"pair_code": "654321"}, "654321"),

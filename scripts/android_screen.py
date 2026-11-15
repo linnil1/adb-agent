@@ -100,9 +100,11 @@ def screen_status(adb: Adb, serial: str, *, deadline: float | None = None) -> di
 
 
 def control_screen(adb: Adb, serial: str, action: str,
-                   rotation: str | None = None) -> dict[str, object]:
-    if action in {"wake-screen", "sleep-screen"}:
-        desired = action == "wake-screen"
+                   rotation: str | None = None, *, state: str | None = None) -> dict[str, object]:
+    if action == "set-screen":
+        if state not in {"awake", "asleep"}:
+            raise ControlError("set-screen state must be awake or asleep")
+        desired = state == "awake"
         shell(adb, serial, ["input", "keyevent", "KEYCODE_WAKEUP" if desired else "KEYCODE_SLEEP"])
     elif action == "rotate-screen":
         if rotation not in {"auto", "0", "90", "180", "270"}:
@@ -129,10 +131,10 @@ def control_screen(adb: Adb, serial: str, action: str,
             observed = {**observed, "errors": latest["errors"]}
             break
         observed = latest
-        if action in {"wake-screen", "sleep-screen"}:
+        if action == "set-screen":
             confirmed = observed["interactive"] is desired
             if confirmed:
-                return {**observed, "action": action, "verified": True}
+                return {**observed, "action": action, "requested_state": state, "verified": True}
         else:
             setting_applied = (
                 observed["rotation_mode"] == "auto" if rotation == "auto" else

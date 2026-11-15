@@ -26,7 +26,7 @@ ACTIONS = (
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom",
     "logs", "crash-logs", "clear-logs",
-    "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
+    "screen-status", "set-screen", "rotate-screen",
     "wait-for-ui", "connect", "disconnect", "pair",
     "get-volume", "set-volume", "get-dnd", "set-dnd",
 )
@@ -46,7 +46,7 @@ ACTION_FIELDS = {
     "logs": {"name", "priority", "match", "lines", "output"},
     "crash-logs": {"name", "priority", "match", "lines", "output"},
     "clear-logs": set(),
-    "screen-status": set(), "wake-screen": set(), "sleep-screen": set(),
+    "screen-status": set(), "set-screen": {"state"},
     "rotate-screen": {"rotation"},
     "wait-for-ui": {"text", "description", "resource_id", "state", "wait_timeout"},
     "connect": {"address"}, "disconnect": {"address"}, "pair": {"address", "pair_code"},
@@ -782,6 +782,7 @@ def require(value: object, flag: str) -> object:
 
 def validate_action_args(args: argparse.Namespace) -> None:
     required = {
+        "set-screen": ("state",),
         "rotate-screen": ("rotation",),
         "zoom": ("x", "y", "direction"),
         "multi-touch": ("fingers",),
@@ -856,14 +857,14 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
             from android_wait import wait_for_ui
         return wait_for_ui(adb, serial, text=args.text, description=args.description,
                            resource_id=args.resource_id, state=args.state, wait_timeout=args.wait_timeout)
-    elif action in {"screen-status", "wake-screen", "sleep-screen", "rotate-screen"}:
+    elif action in {"screen-status", "set-screen", "rotate-screen"}:
         if __package__:
             from .android_screen import control_screen, screen_status
         else:
             from android_screen import control_screen, screen_status
         if action == "screen-status":
             return screen_status(adb, serial)
-        return control_screen(adb, serial, action, args.rotation)
+        return control_screen(adb, serial, action, args.rotation, state=args.state)
     elif action in {"logs", "crash-logs"}:
         return capture_logs(adb, serial, args)
     elif action == "clear-logs":
@@ -1002,7 +1003,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="rotation relative to natural orientation, or auto")
     parser.add_argument("--description", help="exact accessibility description for wait-for-ui")
     parser.add_argument("--resource-id", help="exact resource ID for wait-for-ui")
-    parser.add_argument("--state", choices=("present", "gone", "enabled"))
+    parser.add_argument("--state", choices=("awake", "asleep", "present", "gone", "enabled"),
+                        help="set-screen: awake/asleep; wait-for-ui: present/gone/enabled")
     parser.add_argument("--wait-timeout", type=float, help="UI wait budget in seconds, >0 to 300 (default 30)")
     parser.add_argument("--address", help="ADB endpoint HOST:PORT, or [IPv6]:PORT, on the server's network")
     parser.add_argument("--pair-code", help="six-digit pairing code; interactive CLI prompts when omitted")
@@ -1026,6 +1028,8 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
     validate_action_args(args)
+    if args.action == "set-screen" and args.state not in {"awake", "asleep"}:
+        raise ControlError("set-screen state must be awake or asleep")
     if args.action == "set-volume":
         if isinstance(args.muted, str):
             args.muted = args.muted == "true"
@@ -1057,6 +1061,8 @@ def prepare_action(args: argparse.Namespace) -> None:
             raise ControlError("UI selectors must not be empty")
         if args.state is None:
             args.state = "present"
+        if args.state not in {"present", "gone", "enabled"}:
+            raise ControlError("wait-for-ui state must be present, gone, or enabled")
         if args.wait_timeout is None:
             args.wait_timeout = 30.0
         if not math.isfinite(args.wait_timeout) or not 0 < args.wait_timeout <= 300:

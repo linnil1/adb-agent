@@ -19,7 +19,7 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `set-default-target` | Remember one ready target for one hour. |
 | `status` | Report device state, model, Android version, and battery information. |
 | `screen-status` | Read default-display power, interactive state, and logical size. |
-| `wake-screen` / `sleep-screen` | Explicitly wake/sleep and verify interactivity. |
+| `set-screen` | Set `--state awake\|asleep` with explicit wake/sleep keys and verify interactivity. |
 | `get-dnd` | Read Do Not Disturb, raw Zen mode, ringer modes, and command support. |
 | `set-dnd` | Set `--dnd-mode off\|priority\|alarms\|none` and verify the observed mode. |
 | `get-volume` | Read full audio status; optionally filter streams with `--stream`. |
@@ -65,7 +65,7 @@ python3 scripts/android_control.py --action pair --address phone.local:37000
 
 Interactive CLI pairing prompts for the code without echo; automation and MCP supply `pair_code` (CLI `--pair-code`). The code is sent to ADB via stdin, omitted from tool history/results, and masked in dashboard forms. Pairing doesn't imply a ready connection; call `connect` afterward. These actions preserve the remembered default target.
 
-Screen state and power controls are available as `screen_status`, `wake_screen`, and `sleep_screen`.
+Screen state and power controls are available as `screen_status` and `set_screen` with `state="awake"` or `state="asleep"`.
 
 ## Streamable HTTP MCP
 

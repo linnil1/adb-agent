@@ -25,7 +25,8 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `set-default-target` | `--target TARGET` | none |
 | `connect`, `disconnect` | `--address HOST:PORT` | none |
 | `pair` | `--address HOST:PAIRING_PORT` | `--pair-code CODE` (six digits; interactive CLI prompts if omitted) |
-| `screen-status`, `wake-screen`, `sleep-screen` | none | none |
+| `screen-status` | none | none |
+| `set-screen` | `--state awake\|asleep` | none |
 | `get-dnd` | none | none |
 | `set-dnd` | `--dnd-mode off\|priority\|alarms\|none` | none |
 | `get-volume` | none | `--stream media\|ring\|notification\|alarm\|voice-call` |

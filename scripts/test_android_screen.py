@@ -1,7 +1,10 @@
 """Offline screen state, command, and verification tests."""
+import io
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
+from scripts import android_client as client
 from scripts import android_core as core
 from scripts import android_screen as screen
 
@@ -79,27 +82,38 @@ class AndroidScreenTests(unittest.TestCase):
         with self.assertRaisesRegex(core.ControlError, "cannot read"):
             screen.screen_status(adb, "phone")
 
-    def test_dedicated_power_keys_and_repeated_wake(self):
+    def test_dedicated_power_keys_and_repeated_state_requests(self):
         adb = FakeAdb()
         for _ in range(2):
-            result = screen.control_screen(adb, "phone", "wake-screen")
+            result = screen.control_screen(adb, "phone", "set-screen", state="awake")
             self.assertTrue(result["verified"])
+            self.assertEqual((result["action"], result["requested_state"], result["interactive"]),
+                             ("set-screen", "awake", True))
         self.assertEqual(adb.commands.count(["shell", "input", "keyevent", "KEYCODE_WAKEUP"]), 2)
         adb.values[("dumpsys", "power")] = "mWakefulness=Asleep\nmInteractive=false"
-        result = screen.control_screen(adb, "phone", "sleep-screen")
-        self.assertTrue(result["verified"])
-        self.assertIn(["shell", "input", "keyevent", "KEYCODE_SLEEP"], adb.commands)
+        for _ in range(2):
+            result = screen.control_screen(adb, "phone", "set-screen", state="asleep")
+            self.assertTrue(result["verified"])
+            self.assertEqual((result["requested_state"], result["interactive"]), ("asleep", False))
+        self.assertEqual(adb.commands.count(["shell", "input", "keyevent", "KEYCODE_SLEEP"]), 2)
 
     def test_power_verifies_transition_and_rejects_false_success(self):
         adb = FakeAdb()
         with patch("scripts.android_screen.screen_status", side_effect=[
             {"interactive": False}, {"interactive": True}
         ]), patch("scripts.android_screen.time.sleep"):
-            self.assertTrue(screen.control_screen(adb, "phone", "wake-screen")["verified"])
+            self.assertTrue(screen.control_screen(adb, "phone", "set-screen", state="awake")["verified"])
         adb.timeout = 0.001
         with patch("scripts.android_screen.screen_status", return_value={"interactive": None}):
             with self.assertRaisesRegex(core.ControlError, "not verified"):
-                screen.control_screen(adb, "phone", "wake-screen")
+                screen.control_screen(adb, "phone", "set-screen", state="awake")
+
+    def test_invalid_screen_state_is_rejected_before_injection(self):
+        for state in (None, "present", "gone", "enabled", "on"):
+            adb = FakeAdb()
+            with self.subTest(state=state), self.assertRaises(core.ControlError):
+                screen.control_screen(adb, "phone", "set-screen", state=state)
+            self.assertEqual(adb.commands, [])
 
     def test_rotation_commands_report_requested_and_observed(self):
         adb = FakeAdb(rotation="lock 1")
@@ -136,17 +150,44 @@ class AndroidScreenTests(unittest.TestCase):
         self.assertFalse(result["rotation_matches"])
 
     def test_cli_routing_and_rotation_validation(self):
-        for action in ("screen-status", "wake-screen", "sleep-screen"):
-            args = core.action_args(action, target="phone")
+        for action, values in (("screen-status", {}), ("set-screen", {"state": "awake"}),
+                               ("set-screen", {"state": "asleep"}), ("rotate-screen", {"rotation": "90"})):
+            args = core.action_args(action, target="phone", **values)
             core.prepare_action(args)
             with patch("scripts.android_screen.screen_status", return_value={"target": "phone"}) as status, \
                  patch("scripts.android_screen.control_screen", return_value={"action": action}) as control:
                 core.device_action(args, FakeAdb())
-                (status if action == "screen-status" else control).assert_called_once()
+                if action == "screen-status":
+                    status.assert_called_once_with(ANY, "phone")
+                    control.assert_not_called()
+                else:
+                    control.assert_called_once_with(ANY, "phone", action,
+                                                    values.get("rotation"), state=values.get("state"))
+                    status.assert_not_called()
         with self.assertRaises(core.ControlError):
             core.prepare_action(core.action_args("rotate-screen"))
         with self.assertRaises(core.ControlError):
-            core.prepare_action(core.action_args("wake-screen", rotation="90"))
+            core.prepare_action(core.action_args("set-screen", state="awake", rotation="90"))
+        for state in (None, "present", "gone", "enabled"):
+            with self.subTest(state=state), self.assertRaises(core.ControlError):
+                core.prepare_action(core.action_args("set-screen", state=state))
+
+    def test_forwarded_set_screen_preserves_explicit_state(self):
+        for state in ("awake", "asleep"):
+            args = core.build_parser().parse_args([
+                "--action", "set-screen", "--state", state, "--target", "phone",
+            ])
+            response = io.BytesIO(json.dumps({
+                "ok": True, "result": {"structuredContent": {
+                    "action": "set-screen", "requested_state": state, "verified": True,
+                }},
+            }).encode())
+            with patch("scripts.android_client.urlrequest.urlopen", return_value=response) as request:
+                result = client.execute_via_server(args, "http://127.0.0.1:8000")
+            self.assertEqual(result["requested_state"], state)
+            self.assertEqual(json.loads(request.call_args.args[0].data), {
+                "name": "set_screen", "arguments": {"state": state, "target": "phone"},
+            })
 
 
 if __name__ == "__main__":
