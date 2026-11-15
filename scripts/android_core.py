@@ -28,7 +28,7 @@ ACTIONS = (
     "logs", "crash-logs", "clear-logs",
     "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
     "wait-for-ui", "connect", "disconnect", "pair",
-    "get-dnd", "set-dnd",
+    "get-volume", "set-volume", "get-dnd", "set-dnd",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -51,8 +51,11 @@ ACTION_FIELDS = {
     "rotate-screen": {"rotation"},
     "wait-for-ui": {"text", "description", "resource_id", "state", "wait_timeout"},
     "connect": {"address"}, "disconnect": {"address"}, "pair": {"address", "pair_code"},
+    "get-volume": {"stream"},
+    "set-volume": {"stream", "level", "direction", "muted", "ringer_mode"},
     "get-dnd": set(), "set-dnd": {"dnd_mode"},
 }
+AUDIO_STREAMS = {"media": 3, "ring": 2, "notification": 5, "alarm": 4, "voice-call": 0}
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:\[\]_-]{1,259}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
 COMPONENT_RE = re.compile(
@@ -834,6 +837,15 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         else:
             from android_dnd import get_dnd, set_dnd
         return get_dnd(adb, serial) if action == "get-dnd" else set_dnd(adb, serial, args.dnd_mode)
+    elif action in {"get-volume", "set-volume"}:
+        if __package__:
+            from .android_audio import get_volume, set_volume
+        else:
+            from android_audio import get_volume, set_volume
+        if action == "get-volume":
+            return get_volume(adb, serial, args.stream)
+        return set_volume(adb, serial, stream=args.stream, level=args.level,
+                          direction=args.direction, muted=args.muted, ringer_mode=args.ringer_mode)
     elif action == "wait-for-ui":
         if __package__:
             from .android_wait import wait_for_ui
@@ -991,6 +1003,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wait-timeout", type=float, help="UI wait budget in seconds, >0 to 300 (default 30)")
     parser.add_argument("--address", help="ADB endpoint HOST:PORT, or [IPv6]:PORT, on the server's network")
     parser.add_argument("--pair-code", help="six-digit pairing code; interactive CLI prompts when omitted")
+    parser.add_argument("--stream", choices=tuple(AUDIO_STREAMS), help="get-volume: all streams by default; set-volume: media by default")
+    parser.add_argument("--level", type=int, help="volume index within the phone's reported range")
+    parser.add_argument("--direction", choices=("raise", "lower"))
+    parser.add_argument("--muted", choices=("true", "false"), help="explicit stream mute state")
+    parser.add_argument("--ringer-mode", choices=("normal", "vibrate", "silent"))
     parser.add_argument("--dnd-mode", choices=("off", "priority", "alarms", "none"), help="Do Not Disturb interruption filter")
     return parser
 
@@ -1005,6 +1022,16 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
     validate_action_args(args)
+    if args.action == "set-volume":
+        if isinstance(args.muted, str):
+            args.muted = args.muted == "true"
+        if args.stream is None:
+            args.stream = "media"
+        if __package__:
+            from .android_audio import validate_volume_request
+        else:
+            from android_audio import validate_volume_request
+        validate_volume_request(args.stream, args.level, args.direction, args.muted, args.ringer_mode)
     if args.action in {"connect", "disconnect", "pair"}:
         if __package__:
             from .android_connection import validate_address
@@ -1093,7 +1120,9 @@ def action_args(action: str, *, adb_path: str | None = None, timeout: float = DE
     if adb_path:
         argv += ["--adb", adb_path]
     for name, value in values.items():
-        if isinstance(value, bool):
+        if name == "muted" and isinstance(value, bool):
+            argv.append("--muted=" + str(value).lower())
+        elif isinstance(value, bool):
             if value:
                 argv.append("--" + name.replace("_", "-"))
         elif value is not None:

@@ -22,6 +22,8 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `wake-screen` / `sleep-screen` | Explicitly wake/sleep and verify interactivity. |
 | `get-dnd` | Read Do Not Disturb, raw Zen mode, ringer modes, and command support. |
 | `set-dnd` | Set `--dnd-mode off\|priority\|alarms\|none` and verify the observed mode. |
+| `get-volume` | Read full audio status; optionally filter streams with `--stream`. |
+| `set-volume` | Set volume, mute, direction, or ringer mode; stream defaults to media. |
 | `list-packages` | List installed application packages. |
 | `current-focus` | Report the activity currently holding window focus. |
 | `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |

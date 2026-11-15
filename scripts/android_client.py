@@ -107,6 +107,12 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         request_timeout = max(request_timeout, args.wait_timeout + args.timeout + 5)
     elif args.action in {"connect", "disconnect", "pair"}:
         request_timeout = max(request_timeout, 2 * args.timeout + 10)
+    elif args.action == "get-volume":
+        request_timeout = max(request_timeout, (4 if args.stream else 8) * args.timeout + 5)
+    elif args.action == "set-volume":
+        # A combined ringer/level/mute request includes two full status reads,
+        # preflight reads, three mutations, and bounded readback verification.
+        request_timeout = max(request_timeout, 24 * args.timeout + 30)
     elif args.action in {"get-dnd", "set-dnd"}:
         request_timeout = max(request_timeout, 5 * args.timeout + 10)
     try:

@@ -28,6 +28,8 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `screen-status`, `wake-screen`, `sleep-screen` | none | none |
 | `get-dnd` | none | none |
 | `set-dnd` | `--dnd-mode off\|priority\|alarms\|none` | none |
+| `get-volume` | none | `--stream media\|ring\|notification\|alarm\|voice-call` |
+| `set-volume` | At least one of `--level INT`, `--muted true\|false`, `--direction raise\|lower`, `--ringer-mode normal\|vibrate\|silent` | `--stream STREAM` (default media); level and direction are mutually exclusive |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
 | `tap` | `--x INT --y INT` | none |
@@ -51,7 +53,9 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 
 - Connections use `--address HOST:PORT` or `[IPv6]:PORT`, without `--target` or an existing device connection. Addresses, including `localhost`, resolve on the ADB server host. Pairing and connection ports can differ; MCP requires `pair_code`, while interactive CLI can prompt without echo.
 - Use accessibility element centers for taps and bounds for screenshot regions; `x2,y2` are exclusive. Regions require Android toybox's `od`, `tail`, `head`, and `gzip`. Accessibility can omit WebView/canvas/video content; use screenshots when needed. Waking may leave the phone locked.
+- `get-volume` retains global audio status when filtering streams. Read native index ranges before setting a level. Muted streams can report effective zero below the settable minimum; unmuting restores the remembered level. Ringer-only changes leave media untouched. Stream changes return that stream; ringer changes return all five.
 - DND modes: `off` disables DND, `priority` follows the existing policy, `alarms` allows alarms only, and `none` blocks interruptions. MCP's setter argument is `mode`, matching CLI `--dnd-mode`. Android may link DND, ringer, and stream mute states.
+- Sound setters return observed status with `requested` and `verified`. Combined volume requests apply ringer, level/direction, then mute, without rollback. On verification failure, inspect state before retrying; earlier steps may have applied.
 - Collect recordings with `stop-screen-record`. Starting a new recording discards a finished, uncollected recording; a running recording blocks another start.
 - `logs --name` selects running package processes, including `:service` children; `crash-logs` can match retained reports after exit by exact package. `--match` is literal and priority is a minimum (default V). Output defaults to 200 lines, capped at 5000 lines/256 KiB; `truncated` marks output limits and `scan_truncated` marks discarded data beyond the latest 4 MiB. Only `clear-logs` clears buffers.
 - App fragments match package names, not localized labels. `type-text` converts literal `%s` into a space. For unsupported operations, use ADB on the same host with explicit `-s TARGET`.

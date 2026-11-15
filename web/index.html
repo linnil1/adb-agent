@@ -173,6 +173,11 @@
                   <option v-if="!field.required" value="">Unset</option>
                   <option v-for="choice in field.schema.enum" :key="choice" :value="choice">{{ choice }}</option>
                 </select>
+                <select v-else-if="field.schema.type === 'boolean'" v-model="panels[viewerTarget].toolArguments[field.name]" :required="field.required">
+                  <option value="">{{ field.required ? 'Select…' : 'Unset' }}</option>
+                  <option :value="true">true</option>
+                  <option :value="false">false</option>
+                </select>
                 <input v-else v-model="panels[viewerTarget].toolArguments[field.name]" :type="field.name === 'pair_code' ? 'password' : numeric(field.schema) ? 'number' : 'text'" :required="field.required" :placeholder="field.schema.description || field.schema.title || field.name">
               </label>
               <button :disabled="panels[viewerTarget].busy || !selectedToolFor(viewerTarget)">Run {{ panels[viewerTarget].selectedToolName }}</button>
@@ -234,6 +239,10 @@ createApp({
     for (const timer of Object.values(this.recordingTimers)) clearTimeout(timer);
   },
   methods: {
+    fieldSchema(schema) {
+      const choices = (schema.anyOf || []).filter(item => item.type !== 'null');
+      return choices.length === 1 ? {...schema, ...choices[0]} : schema;
+    },
     numeric(schema) {
       // Optional integers arrive as anyOf [{type: integer}, {type: null}].
       return [schema.type, ...(schema.anyOf || []).map(item => item.type)]
@@ -295,7 +304,7 @@ createApp({
       const schema = this.selectedToolFor(target)?.inputSchema || {};
       const required = new Set(schema.required || []);
       return Object.entries(schema.properties || {}).filter(([name]) => name !== 'target')
-        .map(([name, fieldSchema]) => ({name, schema: fieldSchema, required: required.has(name)}));
+        .map(([name, fieldSchema]) => ({name, schema: this.fieldSchema(fieldSchema), required: required.has(name)}));
     },
     resetToolArguments(target) {
       const panel = this.panels[target];

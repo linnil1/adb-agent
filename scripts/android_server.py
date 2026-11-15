@@ -210,6 +210,26 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Set user rotation in degrees relative to natural orientation, or auto. Returns the applied setting and observed rotation; apps can constrain orientation."""
         return call("rotate-screen", rotation=rotation, target=target)
 
+    @server.tool(name="get_volume")
+    def get_volume_tool(
+        stream: Literal["media", "ring", "notification", "alarm", "voice-call"] | None = None,
+        target: str | None = None,
+    ) -> dict[str, object]:
+        """Read the full audio status: all streams by default, or one selected stream; also ringer modes, DND, microphone mute, device routes, supported commands, and read errors."""
+        return call("get-volume", stream=stream, target=target)
+
+    @server.tool(name="set_volume")
+    def set_volume_tool(
+        stream: Literal["media", "ring", "notification", "alarm", "voice-call"] = "media",
+        level: int | None = None, muted: bool | None = None,
+        direction: Literal["raise", "lower"] | None = None,
+        ringer_mode: Literal["normal", "vibrate", "silent"] | None = None,
+        target: str | None = None,
+    ) -> dict[str, object]:
+        """Set level, mute, raise/lower direction, or global ringer mode and verify readback. Stream defaults to media; ringer-only requests leave media untouched. Require at least one change; level and direction cannot be combined. Apply ringer first, then level/direction, then explicit mute. Return full status plus requested/verified; global ringer changes include all streams. Requests are sequential, not atomic; failures identify verified steps without rollback. Use set_dnd for Do Not Disturb."""
+        return call("set-volume", stream=stream, level=level, muted=muted,
+                    direction=direction, ringer_mode=ringer_mode, target=target)
+
     @server.tool(name="get_dnd")
     def get_dnd_tool(target: str | None = None) -> dict[str, object]:
         """Read Do Not Disturb mode, raw Zen mode, ringer modes, command support, and read errors."""

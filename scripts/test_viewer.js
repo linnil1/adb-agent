@@ -164,6 +164,18 @@ const arrayTool = {inputSchema: {properties: {fingers: {type: 'array'}}}};
 assert.equal(JSON.stringify(app.argumentsFor(arrayTool, {fingers: JSON.stringify(calls[0].args.fingers)}).fingers), JSON.stringify(calls[0].args.fingers));
 console.log('Passed: multi-touch batching, cancellation, Alt-drag, JSON tool fields, and single-touch compatibility.');
 
+// Explicit false must survive the schema-driven form; it means unmute.
+const optionalMute = {anyOf: [{type: 'boolean'}, {type: 'null'}], default: null};
+assert.equal(app.fieldSchema(optionalMute).type, 'boolean');
+const optionalDirection = {anyOf: [{type: 'string', enum: ['raise', 'lower']}, {type: 'null'}]};
+assert.deepEqual(app.fieldSchema(optionalDirection).enum, ['raise', 'lower']);
+const muteTool = {inputSchema: {properties: {muted: optionalMute, stream: {type: 'string'}, target: {type: 'string'}}}};
+assert.equal(app.argumentsFor(muteTool, {muted: false, stream: 'media'}, 'device-a').muted, false);
+assert.equal(app.argumentsFor(muteTool, {muted: true, stream: 'media'}, 'device-a').muted, true);
+assert.equal(app.argumentsFor(muteTool, {muted: '', stream: 'media'}, 'device-a').muted, undefined);
+assert.ok(html.includes('field.schema.type === \'boolean\''));
+console.log('Passed: boolean tool forms preserve explicit mute and unmute selections.');
+
 // Discard pairing codes from the form after both successful and failed calls.
 (async () => {
   app.panels['pair-test'] = {selectedToolName: 'pair', toolArguments: {address: 'phone.local:5556', pair_code: '654321'}};
