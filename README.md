@@ -18,16 +18,14 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `pair` | Pair with a wireless-debugging endpoint and six-digit code. |
 | `set-default-target` | Remember one ready target for one hour. |
 | `status` | Report device state, model, Android version, and battery information. |
-| `screen-status` | Read default-display power, interactive state, logical size, and rotation. |
+| `screen-status` | Read default-display power, interactive state, and logical size. |
 | `wake-screen` / `sleep-screen` | Explicitly wake/sleep and verify interactivity. |
-| `rotate-screen` | Set `--rotation 0\|90\|180\|270\|auto`, relative to natural orientation. |
 | `get-dnd` | Read Do Not Disturb, raw Zen mode, ringer modes, and command support. |
 | `set-dnd` | Set `--dnd-mode off\|priority\|alarms\|none` and verify the observed mode. |
 | `list-packages` | List installed application packages. |
 | `current-focus` | Report the activity currently holding window focus. |
 | `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |
 | `describe-screen` | Return parsed accessibility elements (including resource IDs) or the original UI XML. |
-| `wait-for-ui` | Wait for exact text, description, or resource-ID selectors to be present, gone, or enabled. |
 | `tap` | Tap one screen coordinate. |
 | `swipe` | Swipe between two coordinates. |
 | `multi-touch` | Move 2-10 fingers together for pinch/zoom or multi-finger swipes. |
@@ -65,36 +63,7 @@ python3 scripts/android_control.py --action pair --address phone.local:37000
 
 Interactive CLI pairing prompts for the code without echo; automation and MCP supply `pair_code` (CLI `--pair-code`). The code is sent to ADB via stdin, omitted from tool history/results, and masked in dashboard forms. Pairing doesn't imply a ready connection; call `connect` afterward. These actions preserve the remembered default target.
 
-Selector waits search the current accessibility tree without navigating or tapping. Combine `--text`, `--description`, and `--resource-id` with AND; use `--state present|gone|enabled` and `--wait-timeout` (default 30 seconds, maximum 300). Failed or malformed captures never count as disappearance. MCP exposes `wait_for_ui`; successful results include matching elements, coordinates, attempt count, and elapsed time.
-
-```bash
-python3 scripts/android_control.py --action wait-for-ui --text "Ride history" --wait-timeout 20
-python3 scripts/android_control.py --action wait-for-ui --resource-id com.example:id/loading --state gone
-```
-
-Screen controls use standard ADB commands and are also available as `screen_status`, `wake_screen`, `sleep_screen`, and `rotate_screen`. Unknown status fields are null/`unknown`. Wake and sleep verify the result for up to five seconds; waking can leave the phone locked. Rotation reports both `setting_applied` and `rotation_matches`, because an app can constrain orientation. For example:
-
-```bash
-python3 scripts/android_control.py --action screen-status
-python3 scripts/android_control.py --action rotate-screen --rotation 90
-python3 scripts/android_control.py --action rotate-screen --rotation auto
-```
-
-## Do Not Disturb
-
-Use `get-dnd` to read Do Not Disturb and `set-dnd` to change it. MCP exposes `get_dnd(target?)` and `set_dnd(mode, target?)`; the CLI uses `--dnd-mode`:
-
-```bash
-python3 scripts/android_control.py --action get-dnd
-python3 scripts/android_control.py --action set-dnd --dnd-mode priority
-python3 scripts/android_control.py --action set-dnd --dnd-mode off
-```
-
-Modes are `off` (DND disabled), `priority` (the phone's existing priority policy), `alarms` (alarms only), and `none` (no interruptions). `none` enables the strict filter; it does not mean DND is off. These controls do not edit priority rules or automatic schedules.
-
-Results include `target`, normalized `mode`, raw `zen_mode`, `ringer_mode`, `ringer_mode_external`, command `supported`, and `errors`. Missing state and unknown command support are null with explanatory errors. Set results additionally contain `requested: {"mode": "priority"}` and `verified: true`. The setter requires the advertised `cmd notification set_dnd` command and readable initial state, sends the mutation once, and verifies the observed mode for up to five seconds. A verification failure means the change was sent; inspect `get-dnd` before retrying. Android policy can link DND, ringer, and stream mute behavior; returned ringer fields show the observed state. On the tested Sony, priority mode changed the external ringer mode to silent, and turning DND off cleared media mute while leaving its volume at zero.
-
-The command is implemented in [Android's NotificationShellCmd](https://android.googlesource.com/platform/frameworks/base/+/master/services/core/java/com/android/server/notification/NotificationShellCmd.java). No root or application permission changes are attempted. Restart an existing MCP server to register the tools.
+Screen state and power controls are available as `screen_status`, `wake_screen`, and `sleep_screen`.
 
 ## Streamable HTTP MCP
 
