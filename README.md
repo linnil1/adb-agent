@@ -21,6 +21,8 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `screen-status` | Read default-display power, interactive state, logical size, and rotation. |
 | `wake-screen` / `sleep-screen` | Explicitly wake/sleep and verify interactivity. |
 | `rotate-screen` | Set `--rotation 0\|90\|180\|270\|auto`, relative to natural orientation. |
+| `get-dnd` | Read Do Not Disturb, raw Zen mode, ringer modes, and command support. |
+| `set-dnd` | Set `--dnd-mode off\|priority\|alarms\|none` and verify the observed mode. |
 | `list-packages` | List installed application packages. |
 | `current-focus` | Report the activity currently holding window focus. |
 | `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |
@@ -77,6 +79,22 @@ python3 scripts/android_control.py --action screen-status
 python3 scripts/android_control.py --action rotate-screen --rotation 90
 python3 scripts/android_control.py --action rotate-screen --rotation auto
 ```
+
+## Do Not Disturb
+
+Use `get-dnd` to read Do Not Disturb and `set-dnd` to change it. MCP exposes `get_dnd(target?)` and `set_dnd(mode, target?)`; the CLI uses `--dnd-mode`:
+
+```bash
+python3 scripts/android_control.py --action get-dnd
+python3 scripts/android_control.py --action set-dnd --dnd-mode priority
+python3 scripts/android_control.py --action set-dnd --dnd-mode off
+```
+
+Modes are `off` (DND disabled), `priority` (the phone's existing priority policy), `alarms` (alarms only), and `none` (no interruptions). `none` enables the strict filter; it does not mean DND is off. These controls do not edit priority rules or automatic schedules.
+
+Results include `target`, normalized `mode`, raw `zen_mode`, `ringer_mode`, `ringer_mode_external`, command `supported`, and `errors`. Missing state and unknown command support are null with explanatory errors. Set results additionally contain `requested: {"mode": "priority"}` and `verified: true`. The setter requires the advertised `cmd notification set_dnd` command and readable initial state, sends the mutation once, and verifies the observed mode for up to five seconds. A verification failure means the change was sent; inspect `get-dnd` before retrying. Android policy can link DND, ringer, and stream mute behavior; returned ringer fields show the observed state. On the tested Sony, priority mode changed the external ringer mode to silent, and turning DND off cleared media mute while leaving its volume at zero.
+
+The command is implemented in [Android's NotificationShellCmd](https://android.googlesource.com/platform/frameworks/base/+/master/services/core/java/com/android/server/notification/NotificationShellCmd.java). No root or application permission changes are attempted. Restart an existing MCP server to register the tools.
 
 ## Streamable HTTP MCP
 

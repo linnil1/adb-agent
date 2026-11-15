@@ -28,6 +28,7 @@ ACTIONS = (
     "logs", "crash-logs", "clear-logs",
     "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
     "wait-for-ui", "connect", "disconnect", "pair",
+    "get-dnd", "set-dnd",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -50,6 +51,7 @@ ACTION_FIELDS = {
     "rotate-screen": {"rotation"},
     "wait-for-ui": {"text", "description", "resource_id", "state", "wait_timeout"},
     "connect": {"address"}, "disconnect": {"address"}, "pair": {"address", "pair_code"},
+    "get-dnd": set(), "set-dnd": {"dnd_mode"},
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:\[\]_-]{1,259}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
@@ -784,6 +786,7 @@ def validate_action_args(args: argparse.Namespace) -> None:
         "long-press": ("x", "y"),
         "type-text": ("text",),
         "press-key": ("key",),
+        "set-dnd": ("dnd_mode",),
         "launch-app": ("name",),
         "force-stop-app": ("name",),
         "open-url": ("url",),
@@ -825,7 +828,13 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
     action = args.action
-    if action == "wait-for-ui":
+    if action in {"get-dnd", "set-dnd"}:
+        if __package__:
+            from .android_dnd import get_dnd, set_dnd
+        else:
+            from android_dnd import get_dnd, set_dnd
+        return get_dnd(adb, serial) if action == "get-dnd" else set_dnd(adb, serial, args.dnd_mode)
+    elif action == "wait-for-ui":
         if __package__:
             from .android_wait import wait_for_ui
         else:
@@ -982,6 +991,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wait-timeout", type=float, help="UI wait budget in seconds, >0 to 300 (default 30)")
     parser.add_argument("--address", help="ADB endpoint HOST:PORT, or [IPv6]:PORT, on the server's network")
     parser.add_argument("--pair-code", help="six-digit pairing code; interactive CLI prompts when omitted")
+    parser.add_argument("--dnd-mode", choices=("off", "priority", "alarms", "none"), help="Do Not Disturb interruption filter")
     return parser
 
 

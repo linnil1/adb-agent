@@ -210,6 +210,17 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Set user rotation in degrees relative to natural orientation, or auto. Returns the applied setting and observed rotation; apps can constrain orientation."""
         return call("rotate-screen", rotation=rotation, target=target)
 
+    @server.tool(name="get_dnd")
+    def get_dnd_tool(target: str | None = None) -> dict[str, object]:
+        """Read Do Not Disturb mode, raw Zen mode, ringer modes, command support, and read errors."""
+        return call("get-dnd", target=target)
+
+    @server.tool(name="set_dnd")
+    def set_dnd_tool(mode: Literal["off", "priority", "alarms", "none"],
+                     target: str | None = None) -> dict[str, object]:
+        """Set and verify Do Not Disturb: off disables DND, priority follows existing policy, alarms allows alarms only, none blocks interruptions. Return DND and ringer status plus requested/verified."""
+        return call("set-dnd", dnd_mode=mode, target=target)
+
     @server.tool(name="list_packages")
     def list_packages_tool(target: str | None = None) -> dict[str, object]:
         """List package names currently installed on the device."""

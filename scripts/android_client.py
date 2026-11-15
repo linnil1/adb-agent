@@ -90,6 +90,8 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
             arguments[field] = value
     if args.target:
         arguments["target"] = args.target
+    if args.action == "set-dnd":
+        arguments["mode"] = arguments.pop("dnd_mode")
     payload = json.dumps({
         "name": tool_name_for_action(args.action),
         "arguments": arguments,
@@ -105,6 +107,8 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         request_timeout = max(request_timeout, args.wait_timeout + args.timeout + 5)
     elif args.action in {"connect", "disconnect", "pair"}:
         request_timeout = max(request_timeout, 2 * args.timeout + 10)
+    elif args.action in {"get-dnd", "set-dnd"}:
+        request_timeout = max(request_timeout, 5 * args.timeout + 10)
     try:
         with urlrequest.urlopen(request, timeout=request_timeout) as response:
             body = read_json_response(response)

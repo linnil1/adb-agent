@@ -27,6 +27,8 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `pair` | `--address HOST:PAIRING_PORT` | `--pair-code CODE` (six digits; interactive CLI prompts if omitted) |
 | `screen-status`, `wake-screen`, `sleep-screen` | none | none |
 | `rotate-screen` | `--rotation 0\|90\|180\|270\|auto` | none |
+| `get-dnd` | none | none |
+| `set-dnd` | `--dnd-mode off\|priority\|alarms\|none` | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
 | `wait-for-ui` | At least one of `--text STRING --description STRING --resource-id STRING` | `--state present\|gone\|enabled` (default present); `--wait-timeout SECONDS` (default 30, >0 to 300) |
@@ -58,6 +60,12 @@ Wait selectors are exact and combined with AND. Zero-area/explicitly hidden node
 Screenshot regions require all four coordinates; `x2,y2` are exclusive, matching element bounds. Prefer regions for small areas. They require Android toybox's `od`, `tail`, `head`, and `gzip`.
 
 Screen status uses logical dimensions; unknown fields are null/`unknown`, with failures in `errors`. Wake/sleep verify interactivity for up to five seconds; waking may leave the lock screen. Rotation is relative to natural orientation; `auto` releases the lock. Check `rotation_matches` separately from `setting_applied`: apps may constrain orientation.
+
+## Do Not Disturb
+
+`get-dnd` returns normalized `mode`, raw `zen_mode`, internal/external ringer modes, command `supported`, and `errors`. Unknown state/support is null. Modes: `off` disables DND; `priority` uses the existing priority policy; `alarms` allows alarms only; `none` blocks interruptions. These tools do not modify priority rules or schedules.
+
+`set-dnd --dnd-mode MODE` requires advertised `cmd notification set_dnd` support and readable state, sends the mutation once, and verifies for up to five seconds. Success adds `requested` and `verified: true`. A verification error means the change was sent; inspect `get-dnd` before retrying. Android policy may change ringer and stream mute states during DND transitions. MCP names are `get_dnd` and `set_dnd`; MCP's required argument is `mode` (CLI `--dnd-mode`).
 
 ## Gestures
 
