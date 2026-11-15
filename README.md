@@ -21,7 +21,8 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | `list-packages` | List installed application packages. |
 | `current-focus` | Report the activity currently holding window focus. |
 | `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |
-| `describe-screen` | Return parsed accessibility elements or the original UI XML. |
+| `describe-screen` | Return parsed accessibility elements (including resource IDs) or the original UI XML. |
+| `wait-for-ui` | Wait for exact text, description, or resource-ID selectors to be present, gone, or enabled. |
 | `tap` | Tap one screen coordinate. |
 | `swipe` | Swipe between two coordinates. |
 | `multi-touch` | Move 2-10 fingers together for pinch/zoom or multi-finger swipes. |
@@ -48,6 +49,13 @@ python3 scripts/android_control.py --action crash-logs --name com.example.app --
 ```
 
 `--match` is a literal text filter. Crash filters select reports with their stack context; line/byte limits may cut a report and set `truncated`. App logs resolve currently running package processes; crash matching also works after the app exits. Output defaults to 200 physical lines, at most 5000 lines/256 KiB; capture retains the latest 4 MiB before filtering and reports `scan_truncated` if older bytes were discarded. The CLI saves `--output` on the client machine even when forwarded through the server. MCP exposes `logs`, `crash_logs`, and `clear_logs`.
+
+Selector waits search the current accessibility tree without navigating or tapping. Combine `--text`, `--description`, and `--resource-id` with AND; use `--state present|gone|enabled` and `--wait-timeout` (default 30 seconds, maximum 300). Failed or malformed captures never count as disappearance. MCP exposes `wait_for_ui`; successful results include matching elements, coordinates, attempt count, and elapsed time.
+
+```bash
+python3 scripts/android_control.py --action wait-for-ui --text "Ride history" --wait-timeout 20
+python3 scripts/android_control.py --action wait-for-ui --resource-id com.example:id/loading --state gone
+```
 
 Screen controls use standard ADB commands and are also available as `screen_status`, `wake_screen`, `sleep_screen`, and `rotate_screen`. Unknown status fields are null/`unknown`. Wake and sleep verify the result for up to five seconds; waking can leave the phone locked. Rotation reports both `setting_applied` and `rotation_matches`, because an app can constrain orientation. For example:
 
@@ -137,7 +145,7 @@ MIT. See [LICENSE](LICENSE).
 ## Tests
 
 ```bash
-python3 -m unittest scripts/test_android_control.py scripts/test_android_logs.py scripts/test_android_screen.py
+python3 -m unittest discover -s scripts -p 'test_android_*.py'
 node scripts/test_viewer.js
 python3 scripts/android_control.py --action list-targets
 ```

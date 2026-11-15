@@ -100,8 +100,11 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    request_timeout = max(args.timeout, 1)
+    if args.action == "wait-for-ui":
+        request_timeout = max(request_timeout, args.wait_timeout + args.timeout + 5)
     try:
-        with urlrequest.urlopen(request, timeout=max(args.timeout, 1)) as response:
+        with urlrequest.urlopen(request, timeout=request_timeout) as response:
             body = read_json_response(response)
     except urlerror.HTTPError as error:
         try:

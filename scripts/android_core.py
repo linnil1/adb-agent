@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import os
 import re
 import selectors
@@ -26,6 +27,7 @@ ACTIONS = (
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom-in", "zoom-out",
     "logs", "crash-logs", "clear-logs",
     "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
+    "wait-for-ui",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -46,6 +48,7 @@ ACTION_FIELDS = {
     "clear-logs": set(),
     "screen-status": set(), "wake-screen": set(), "sleep-screen": set(),
     "rotate-screen": {"rotation"},
+    "wait-for-ui": {"text", "description", "resource_id", "state", "wait_timeout"},
 }
 SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
@@ -378,11 +381,12 @@ def attribute(tag: str, name: str) -> str:
     return html.unescape(match.group(1)) if match else ""
 
 
-def parse_ui_xml(xml: str) -> list[dict[str, object]]:
+def parse_ui_xml(xml: str, *, visible_only: bool = False) -> list[dict[str, object]]:
     elements: list[dict[str, object]] = []
     for tag in extract_node_tags(xml):
         text = attribute(tag, "text")
         description = attribute(tag, "content-desc")
+        resource_id = attribute(tag, "resource-id")
         class_name = attribute(tag, "class")
         clickable = attribute(tag, "clickable") == "true"
         selected = attribute(tag, "selected") == "true"
@@ -400,16 +404,19 @@ def parse_ui_xml(xml: str) -> list[dict[str, object]]:
                 ("focusable", focusable),
             ) if active
         ]
-        if not text and not description and not clickable and not selected and not scrollable:
+        if not text and not description and not resource_id and not clickable and not selected and not scrollable:
             continue
         bounds = BOUNDS_RE.fullmatch(attribute(tag, "bounds"))
         if not bounds:
             continue
         x1, y1, x2, y2 = map(int, bounds.groups())
+        if visible_only and (attribute(tag, "visible-to-user") == "false" or x2 <= x1 or y2 <= y1):
+            continue
         elements.append({
             "label": text or description or class_name.rsplit(".", 1)[-1] or "element",
             "text": text,
             "description": description,
+            "resource_id": resource_id,
             "class": class_name,
             "package": attribute(tag, "package"),
             "states": states,
@@ -436,21 +443,35 @@ def description_elements(result: dict[str, object]) -> list[dict[str, object]]:
     return parse_ui_xml(xml) if isinstance(xml, str) else []
 
 
-def dump_ui(adb: Adb, serial: str) -> str:
+def dump_ui(adb: Adb, serial: str, *, deadline: float | None = None) -> str:
+    def budget() -> float | None:
+        if deadline is None:
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ControlError("UI capture deadline reached")
+        return min(adb.timeout, remaining)
+
+    def xml_part(text: str) -> str:
+        start = text.find("<?xml")
+        if start < 0:
+            start = text.find("<hierarchy")
+        if start < 0:
+            raise ControlError("UI capture did not return a hierarchy")
+        end = text.find("</hierarchy>", start)
+        return text[start:end + len("</hierarchy>")] if end >= 0 else text[start:]
+
     try:
         text = adb.run(
-            ["exec-out", "uiautomator", "dump", "/dev/tty"], serial=serial
+            ["exec-out", "uiautomator", "dump", "/dev/tty"], serial=serial, timeout=budget()
         ).decode("utf-8", "replace")
-        start = text.find("<?xml")
-        if start >= 0:
-            return text[start:]
-        if "<hierarchy" in text:
-            return text
+        return xml_part(text)
     except ControlError:
         pass
-    remote = "/sdcard/window_dump.xml"
-    shell(adb, serial, ["uiautomator", "dump", remote])
-    return adb.run(["exec-out", "cat", remote], serial=serial).decode("utf-8", "replace")
+    # A fresh path prevents a failed dump from reusing an earlier screen's XML.
+    remote = f"/sdcard/android-control-ui-{os.getpid()}-{time.time_ns()}.xml"
+    script = f"uiautomator dump {remote} && cat {remote}; result=$?; rm -f {remote}; exit $result"
+    return xml_part(shell(adb, serial, [script], timeout=budget()).decode("utf-8", "replace"))
 
 
 def screenshot_region(
@@ -800,7 +821,14 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
     action = args.action
-    if action in {"screen-status", "wake-screen", "sleep-screen", "rotate-screen"}:
+    if action == "wait-for-ui":
+        if __package__:
+            from .android_wait import wait_for_ui
+        else:
+            from android_wait import wait_for_ui
+        return wait_for_ui(adb, serial, text=args.text, description=args.description,
+                           resource_id=args.resource_id, state=args.state, wait_timeout=args.wait_timeout)
+    elif action in {"screen-status", "wake-screen", "sleep-screen", "rotate-screen"}:
         if __package__:
             from .android_screen import control_screen, screen_status
         else:
@@ -944,6 +972,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lines", type=int, help="maximum returned log lines, 1-5000 (default 200)")
     parser.add_argument("--rotation", choices=("0", "90", "180", "270", "auto"),
                         help="rotation relative to natural orientation, or auto")
+    parser.add_argument("--description", help="exact accessibility description for wait-for-ui")
+    parser.add_argument("--resource-id", help="exact resource ID for wait-for-ui")
+    parser.add_argument("--state", choices=("present", "gone", "enabled"))
+    parser.add_argument("--wait-timeout", type=float, help="UI wait budget in seconds, >0 to 300 (default 30)")
     return parser
 
 
@@ -957,6 +989,18 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
     validate_action_args(args)
+    if args.action == "wait-for-ui":
+        selectors = [args.text, args.description, args.resource_id]
+        if not any(value is not None for value in selectors):
+            raise ControlError("wait-for-ui requires --text, --description, or --resource-id")
+        if any(value == "" for value in selectors):
+            raise ControlError("UI selectors must not be empty")
+        if args.state is None:
+            args.state = "present"
+        if args.wait_timeout is None:
+            args.wait_timeout = 30.0
+        if not math.isfinite(args.wait_timeout) or not 0 < args.wait_timeout <= 300:
+            raise ControlError("--wait-timeout must be greater than 0 and at most 300 seconds")
     if args.action in {"logs", "crash-logs"}:
         if args.lines is None:
             args.lines = 200

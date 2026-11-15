@@ -29,6 +29,7 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 | `rotate-screen` | `--rotation 0\|90\|180\|270\|auto` | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
+| `wait-for-ui` | At least one of `--text STRING --description STRING --resource-id STRING` | `--state present\|gone\|enabled` (default present); `--wait-timeout SECONDS` (default 30, >0 to 300) |
 | `tap` | `--x INT --y INT` | none |
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` (default 300) |
 | `multi-touch` | `--fingers JSON` | `--duration INT` (default 300, range 1-3000) |
@@ -46,7 +47,9 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 
 ## Screen inspection
 
-`describe-screen` returns elements with `label`, `text`, `description`, `bounds`, `center`, `class`, `package`, and `states`. Use `center` for taps and `bounds` for screenshot regions. `--format original` returns raw XML in `xml`.
+`describe-screen` returns elements with `label`, `text`, `description`, `resource_id`, `bounds`, `center`, `class`, `package`, and `states`. Use `center` for taps and `bounds` for screenshot regions. `--format original` returns raw XML in `xml`.
+
+Wait selectors are exact and combined with AND. Zero-area/explicitly hidden nodes are ignored. Failed captures cannot satisfy `gone`. `--wait-timeout` bounds the wait; success returns matching elements and coordinates without tapping.
 
 Screenshot regions require all four coordinates, with exclusive `x2,y2`, matching element bounds. Prefer regions for small areas: only their screen rows are transferred, gzip-compressed. Regions require Android toybox's `od`, `tail`, `head`, and `gzip`.
 

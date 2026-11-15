@@ -224,6 +224,18 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         cache_description(result["target"], elements)  # type: ignore[index]
         return result  # type: ignore[return-value]
 
+    @server.tool(name="wait_for_ui")
+    def wait_for_ui_tool(
+        text: str | None = None, description: str | None = None,
+        resource_id: str | None = None,
+        state: Literal["present", "gone", "enabled"] = "present",
+        wait_timeout: float = 30.0, target: str | None = None,
+    ) -> dict[str, object]:
+        """Wait for exact selectors in the current UI tree (combined with AND). State is present/gone/enabled; wait_timeout is >0 to 300 seconds. Returns matching elements without tapping."""
+        result = call("wait-for-ui", text=text, description=description, resource_id=resource_id,
+                      state=state, wait_timeout=wait_timeout, target=target)
+        return result
+
     @server.tool(name="tap")
     def tap_tool(x: int, y: int, target: str | None = None) -> dict[str, object]:
         """Tap non-negative device-pixel coordinates."""
