@@ -164,6 +164,36 @@ const arrayTool = {inputSchema: {properties: {fingers: {type: 'array'}}}};
 assert.equal(JSON.stringify(app.argumentsFor(arrayTool, {fingers: JSON.stringify(calls[0].args.fingers)}).fingers), JSON.stringify(calls[0].args.fingers));
 console.log('Passed: multi-touch batching, cancellation, Alt-drag, JSON tool fields, and single-touch compatibility.');
 
+// Navigation and editing keys all use press_key, after buffered text is submitted.
+const keyboardCalls = [];
+app.queueInteractiveCall = (target, name, args) => keyboardCalls.push({target, name, args});
+app.panels['device-b'].textBuffer = '';
+for (const [browserKey, deviceKey] of Object.entries({
+  Home: 'home', Escape: 'back', Enter: 'enter', Backspace: 'delete', Tab: 'tab',
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'
+})) {
+  let prevented = false;
+  app.interactiveKey('device-b', {key: browserKey, preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
+  const call = keyboardCalls.pop();
+  assert.equal(call.target, 'device-b');
+  assert.equal(call.name, 'press_key');
+  assert.equal(call.args.key, deviceKey);
+}
+app.interactiveKey('device-b', {key: 'a', preventDefault() {}});
+app.interactiveKey('device-b', {key: 'b', preventDefault() {}});
+app.interactiveKey('device-b', {key: 'Enter', preventDefault() {}});
+assert.equal(JSON.stringify(keyboardCalls), JSON.stringify([
+  {target: 'device-b', name: 'type_text', args: {text: 'ab'}},
+  {target: 'device-b', name: 'press_key', args: {key: 'enter'}}
+]));
+assert.equal(app.panels['device-b'].textBuffer, '');
+for (const extra of [{ctrlKey: true}, {metaKey: true}, {altKey: true}, {isComposing: true}]) {
+  app.interactiveKey('device-b', {key: 'Home', ...extra, preventDefault() { assert.fail('ignored key prevented'); }});
+}
+assert.equal(keyboardCalls.length, 2);
+console.log('Passed: Home, Escape, and editing keys use press_key; buffered text is submitted before Enter.');
+
 // Explicit false must survive the schema-driven form; it means unmute.
 const optionalMute = {anyOf: [{type: 'boolean'}, {type: 'null'}], default: null};
 assert.equal(app.fieldSchema(optionalMute).type, 'boolean');

@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 ACTIONS = (
     "list-targets", "set-default-target", "status", "list-packages", "current-focus",
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
-    "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
+    "press-key", "launch-app", "force-stop-app", "open-url",
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom",
     "logs", "crash-logs", "clear-logs",
     "screen-status", "set-screen", "rotate-screen",
@@ -39,7 +39,7 @@ ACTION_FIELDS = {
     "multi-touch": {"fingers", "duration"},
     "zoom": {"x", "y", "direction", "distance", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
-    "press-key": {"key"}, "home": set(), "back": set(),
+    "press-key": {"key"},
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
     "open-url": {"url"},
     "start-screen-record": {"time_limit"}, "stop-screen-record": {"output"},
@@ -930,8 +930,8 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
     elif action == "type-text":
         shell(adb, serial, ["input", "text", shell_quote(args.text.replace(" ", "%s"))])
         return {"target": serial, "action": action, "characters": len(args.text)}
-    elif action in {"press-key", "home", "back"}:
-        key = args.key if action == "press-key" else action
+    elif action == "press-key":
+        key = args.key
         shell(adb, serial, ["input", "keyevent", str(KEY_MAP[key])])
         return {"target": serial, "action": action, "key": key}
     elif action == "launch-app":

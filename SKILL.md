@@ -9,7 +9,7 @@ description: Inspect and control authorized Android devices over ADB via CLI or 
 python3 scripts/android_control.py --action ACTION [--target TARGET] [arguments]
 ```
 
-Results are JSON with device identifiers in `target`; errors go to stderr. MCP names use underscores; `home/back` become `press_home/press_back`.
+Results are JSON with device identifiers in `target`; errors go to stderr. MCP names use underscores; for example, `press-key` becomes `press_key`.
 
 Run `list-targets` first. With several devices, specify `--target`; `set-default-target` remembers one for an hour. Other actions preserve that default. Preserve app sessions; force-restart only for a requested clean start or a stuck app.
 
@@ -21,7 +21,7 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 
 | Action | Required arguments | Optional arguments |
 |---|---|---|
-| `list-targets`, `status`, `list-packages`, `current-focus`, `home`, `back` | none | none |
+| `list-targets`, `status`, `list-packages`, `current-focus` | none | none |
 | `set-default-target` | `--target TARGET` | none |
 | `connect`, `disconnect` | `--address HOST:PORT` | none |
 | `pair` | `--address HOST:PAIRING_PORT` | `--pair-code CODE` (six digits; interactive CLI prompts if omitted) |
@@ -39,7 +39,7 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `zoom` | `--x INT --y INT` center; `--direction in\|out` | `--distance INT` (default 150); `--duration INT` (default 500, range 1-3000) |
 | `long-press` | `--x INT --y INT` | `--duration INT` (default 1000) |
 | `type-text` | `--text STRING` | none |
-| `press-key` | `--key KEY` | none |
+| `press-key` | `--key KEY` (choices below) | none |
 | `launch-app` | `--name PACKAGE_OR_FRAGMENT` | `--force-restart` |
 | `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none |
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
@@ -49,6 +49,19 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `clear-logs` | none | none |
 
 `--fingers` is a JSON array of 2-10 paths, each exactly `{"x1":INT,"y1":INT,"x2":INT,"y2":INT}`; MCP takes the array directly. Coordinates must be 0-65535. Keep paths within the display and verify pinch results with a screenshot.
+
+`press-key --key` accepts these values (MCP: `press_key(key=...)`):
+
+- Navigation/editing: `home`, `back`, `up`, `down`, `left`, `right`, `tab`, `enter`, `delete`, `recents`.
+- Volume: `volume-up`, `volume-down`, `volume-mute`.
+- Media: `media-play`, `media-pause`, `media-play-pause`, `media-next`, `media-previous`.
+
+Use `type-text --text` for ordinary text; send Enter, Tab, and arrow keys with `press-key`. `delete` means Backspace. Home and Back use `press-key --key home` and `press-key --key back`; there are no standalone Home/Back actions. To type and then submit:
+
+```bash
+python3 scripts/android_control.py --action type-text --target TARGET --text "search terms"
+python3 scripts/android_control.py --action press-key --target TARGET --key enter
+```
 
 ## Usage notes
 

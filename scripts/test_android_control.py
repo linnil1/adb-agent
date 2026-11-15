@@ -352,6 +352,36 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(result["key"], "delete")
         self.assertEqual(calls[-1][0], ["shell", "input", "keyevent", "67"])
 
+    def test_navigation_uses_press_key_for_dispatch_and_forwarding(self):
+        for key, code in (("home", 3), ("back", 4)):
+            with self.subTest(key=key):
+                args = android.build_parser().parse_args([
+                    "--action", "press-key", "--key", key, "--target", "device-1",
+                ])
+                android.prepare_action(args)
+                adb = self.fake_adb(("device-1", "device"))
+                original = adb.run
+
+                def dispatch(command, **kwargs):
+                    if command == ["shell", "input", "keyevent", str(code)]:
+                        return b""
+                    return original(command, **kwargs)
+
+                with patch.object(adb, "run", side_effect=dispatch) as run:
+                    result = android.device_action(args, adb)
+                self.assertEqual(result, {"target": "device-1", "action": "press-key", "key": key})
+                self.assertEqual(run.call_args.args[0], ["shell", "input", "keyevent", str(code)])
+                response = io.BytesIO(json.dumps({
+                    "ok": True, "result": {"structuredContent": result},
+                }).encode())
+                with patch.object(android.urlrequest, "urlopen", return_value=response) as request:
+                    self.assertEqual(android.execute_via_server(args, "http://127.0.0.1:8000"), result)
+                self.assertEqual(json.loads(request.call_args.args[0].data), {
+                    "name": "press_key", "arguments": {"key": key, "target": "device-1"},
+                })
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    android.build_parser().parse_args(["--action", key])
+
     def test_force_stop_resolves_and_uses_argument_array(self):
         calls = []
 

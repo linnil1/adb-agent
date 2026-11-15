@@ -359,16 +359,6 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         """Send a navigation, editing, volume, or media key. Volume keys follow Android's current context; key dispatch does not verify volume or playback changes."""
         return call("press-key", key=key, target=target)  # type: ignore[return-value]
 
-    @server.tool(name="press_home")
-    def press_home_tool(target: str | None = None) -> dict[str, object]:
-        """Press the Android home button."""
-        return call("home", target=target)  # type: ignore[return-value]
-
-    @server.tool(name="press_back")
-    def press_back_tool(target: str | None = None) -> dict[str, object]:
-        """Press the Android back button."""
-        return call("back", target=target)  # type: ignore[return-value]
-
     @server.tool(name="launch_app")
     def launch_app_tool(
         name: str,

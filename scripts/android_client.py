@@ -74,9 +74,7 @@ def discover_server() -> str | None:
 
 
 def tool_name_for_action(action: str) -> str:
-    return {"home": "press_home", "back": "press_back"}.get(
-        action, action.replace("-", "_")
-    )
+    return action.replace("-", "_")
 
 
 def execute_via_server(args: argparse.Namespace, server_url: str) -> object:

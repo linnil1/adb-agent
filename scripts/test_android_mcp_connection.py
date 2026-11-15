@@ -12,6 +12,8 @@ import unittest
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
+from scripts.android_core import KEY_MAP
+
 
 @unittest.skipUnless(importlib.util.find_spec("mcp"), "requires optional MCP SDK")
 class MCPConnectionTests(unittest.TestCase):
@@ -134,6 +136,14 @@ else:
             args = {} if state is None else {"state": state}
             result = self.call("set_screen", args)
             self.assertFalse(result.get("ok") and not result.get("result", {}).get("isError"), result)
+
+    def test_navigation_has_one_press_key_tool_with_complete_key_enum(self):
+        tools = {tool["name"]: tool for tool in self.get("/api/tools")["tools"]}
+        self.assertNotIn("press_home", tools)
+        self.assertNotIn("press_back", tools)
+        schema = tools["press_key"]["inputSchema"]
+        self.assertIn("key", schema["required"])
+        self.assertEqual(set(schema["properties"]["key"]["enum"]), set(KEY_MAP))
 
     def test_pair_validation_and_adb_errors_never_echo_input_codes(self):
         for args, code in (

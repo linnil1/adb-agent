@@ -34,9 +34,7 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `zoom` | Zoom `--direction in\|out` around `--x --y`; `--distance` is each finger's travel in pixels (default 150). |
 | `long-press` | Hold one screen coordinate. |
 | `type-text` | Enter text through Android input. |
-| `press-key` | Send navigation, editing, volume, or media playback keys. |
-| `home` | Navigate to the Android home screen. |
-| `back` | Navigate back. |
+| `press-key` | Send navigation (including `--key home` and `--key back`), editing, volume, or media playback keys. |
 | `launch-app` | Launch an installed package, optionally forcing a restart. |
 | `force-stop-app` | Force-stop an installed package. |
 | `open-url` | Open an HTTP or HTTPS URL on the device. |
