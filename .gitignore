@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 android-screen.png
+android-screen.mp4
+*.log
+.mcp.json

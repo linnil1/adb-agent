@@ -1,25 +1,23 @@
 ---
 name: android-device-control
-description: Inspect and control an authorized Android phone or emulator over ADB through the local CLI or MCP, including screenshots, screen power/rotation, UI elements, input, multi-touch, apps, recording, and logs.
+description: Inspect and control authorized Android devices over ADB via CLI or MCP for screens, UI waits, gestures, apps, recordings, logs, and connections.
 ---
 
 # Android Device Control
-
-Use the local tool:
 
 ```bash
 python3 scripts/android_control.py --action ACTION [--target TARGET] [arguments]
 ```
 
-Results are JSON; device identifiers use `target`. Errors go to stderr. MCP tool names replace CLI hyphens with underscores; `home/back` become `press_home/press_back`.
+Results are JSON with device identifiers in `target`; errors go to stderr. MCP tool/argument names use underscores; `home/back` become `press_home/press_back`.
 
-Run `list-targets` first. Omit `--target` with one ready device; specify it with several. `set-default-target` remembers a target for one hour; other calls never change it. Preserve the current app session; use `--force-restart` only for a requested clean start or a stuck app.
+Run `list-targets` first. With several devices, specify `--target`; `set-default-target` remembers one for an hour. Other actions preserve that default. Preserve app sessions; force-restart only for a requested clean start or a stuck app.
+
+Global: `--timeout SECONDS` (default 30), `--adb PATH`, `--direct`. `--direct` or `--adb` bypasses server discovery; otherwise CLI forwards to a verified local server. Direct ADB uses the CLI timeout; forwarded ADB uses the server's configured timeout. Never retry a failed forwarded mutation directly.
 
 ## Arguments
 
-Global options: `--target TARGET`, `--timeout SECONDS` (default 30), `--adb PATH`, `--direct`. The last two bypass local server discovery. CLI calls otherwise forward to a verified local server when available. If a forwarded action fails, do not retry a mutating action directly.
-
-Pass only arguments for the selected action. Coordinates and durations are non-negative integers in device pixels and milliseconds.
+Coordinates are device pixels; gesture durations are milliseconds. Pass only fields for the selected action.
 
 | Action | Required arguments | Optional arguments |
 |---|---|---|
@@ -51,40 +49,33 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 
 Use explicit `--address HOST:PORT` or `[IPv6]:PORT`, without `--target`. No connected device is required. Addresses, including `localhost`, are reached from the MCP server's ADB host (the local host for direct CLI). Pairing and connection ports can differ. MCP requires `pair_code`; CLI can prompt without echo. Codes are omitted from tool history/results.
 
-## Screen inspection
+## Screens and waits
 
-`describe-screen` returns elements with `label`, `text`, `description`, `resource_id`, `bounds`, `center`, `class`, `package`, and `states`. Use `center` for taps and `bounds` for screenshot regions. `--format original` returns raw XML in `xml`.
+`describe-screen` returns text, descriptions, `resource_id`, states, bounds, and centers. `--format original` returns XML. Accessibility can omit WebView/canvas/video content; use screenshots when needed.
 
 Wait selectors are exact and combined with AND. Zero-area/explicitly hidden nodes are ignored. Failed captures cannot satisfy `gone`. `--wait-timeout` bounds the wait; success returns matching elements and coordinates without tapping.
 
-Screenshot regions require all four coordinates, with exclusive `x2,y2`, matching element bounds. Prefer regions for small areas: only their screen rows are transferred, gzip-compressed. Regions require Android toybox's `od`, `tail`, `head`, and `gzip`.
+Screenshot regions require all four coordinates; `x2,y2` are exclusive, matching element bounds. Prefer regions for small areas. They require Android toybox's `od`, `tail`, `head`, and `gzip`.
 
-`uiautomator` can omit WebView, canvas, video, and accessibility-hidden content; use screenshots when the hierarchy is incomplete.
+Screen status uses logical dimensions; unknown fields are null/`unknown`, with failures in `errors`. Wake/sleep verify interactivity for up to five seconds; waking may leave the lock screen. Rotation is relative to natural orientation; `auto` releases the lock. Check `rotation_matches` separately from `setting_applied`: apps may constrain orientation.
 
-`screen-status` reads the default display's power, interactivity, logical size, and rotation; unknown fields are null/`unknown`, with read failures in `errors`. Wake/sleep use dedicated keys and verify interactivity within five seconds; waking may leave the lock screen. Rotation angles are relative to natural orientation; `auto` releases the user rotation lock. `setting_applied` confirms the setting, while `rotation_matches` reports whether the display followed it (apps may constrain orientation).
+## Gestures
 
-## Multi-touch and pinch-to-zoom
+`--fingers` is a JSON array of 2-10 paths, each exactly `{"x1":INT,"y1":INT,"x2":INT,"y2":INT}`. Fingers move simultaneously along straight lines; coordinates must be 0-65535. MCP takes the array directly. The bundled helper needs Android 6+ and shell input injection, without APK installation or root.
 
-`--fingers`: JSON array of 2-10 paths, each exactly `{"x1":INT,"y1":INT,"x2":INT,"y2":INT}`, moving simultaneously from start to end along straight lines. Coordinates: 0-65535, within the display. MCP `fingers` takes the array directly. Requires shell input injection; the bundled ADB helper needs no APK or root.
+Zoom offsets are 100 → 100+distance pixels per finger from the center, reversed for zoom-out. Out-of-screen paths are rejected. Verify screenshots; apps may ignore slow pinches.
 
-Zoom `distance` is each finger's travel in pixels: offsets from the center are 100 → 100+distance for zoom-in, reversed for zoom-out. Out-of-screen endpoints are rejected. Verify screenshots; slow pinches may be ignored by the app.
+## Recording and logs
 
-## Recording
+Recordings stop at the required time limit despite disconnection; collect with `stop-screen-record`. A running recording blocks another start. Starting anew discards finished, uncollected recordings.
 
-Start with a required time limit, then call `stop-screen-record` to collect the MP4. Recording survives a disconnected client and stops at its limit. One recording runs per device; starting another discards the previous recording, even if it has finished. Results include `seconds`.
+`logs --name` selects current package processes, including `:service` children, and fails if none run. `crash-logs` matches retained reports, including exited/uninstalled apps by exact package. Match is literal; crash filters retain report context. Minimum priority defaults to V; lines default to 200 (maximum 5000/256 KiB). `truncated` flags output limits; `scan_truncated` flags discarded bytes beyond the latest 4 MiB. Limits can cut stack traces. CLI `--output` saves the returned text locally. Only `clear-logs` clears main/system/crash buffers.
 
-## Other tool behavior
+## Other behavior
 
 - `type-text` converts literal `%s` into a space.
-- App fragments match package names, not localized launcher labels.
-- ADB discovery checks `ADB_PATH`, `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, and common SDK locations including `~/android-sdk/platform-tools/adb`.
-- For unsupported operations, use ADB with an explicit `-s TARGET`.
-
-## Logs
-
-`logs` reads main/system/crash buffers; `--name` selects current app processes (including `:service` children), failing if none run. `crash-logs` reads retained crashes and can match an exited app by its exact package. Priority is a minimum (default V); match is literal. Crash filters preserve matching report context.
-
-Results include `text`, `line_count`, `matched_lines`, `pids`, and truncation flags. Defaults: 200 lines; maximum 5000 lines/256 KiB, scanning the latest 4 MiB. Limits can cut stack traces; `scan_truncated` means older captured bytes were discarded. An empty capture doesn't prove no crash occurred. CLI `--output` saves the same bounded text locally. Only `clear-logs` clears main/system/crash buffers.
+- App fragments match package names, not localized labels.
+- For unsupported operations, use ADB on the same host with explicit `-s TARGET`.
 
 ## MCP
 
@@ -94,4 +85,4 @@ Install `requirements-mcp.txt`, then run:
 python3 scripts/android_control.py --mcp [--host HOST] [--port PORT]
 ```
 
-Defaults: `127.0.0.1:8000`; Streamable HTTP at `/mcp`, dashboard at `/`. MCP arguments omit CLI `--` prefixes; screenshot returns an image and stopped recording returns a video URL.
+Defaults: `127.0.0.1:8000`; Streamable HTTP `/mcp`, dashboard `/`. Screenshots return images; stopped recordings return video URLs.

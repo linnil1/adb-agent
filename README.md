@@ -6,7 +6,7 @@ A Codex skill and Python CLI for inspecting and controlling an authorized Androi
 python3 scripts/android_control.py --action ACTION [--target TARGET] [action arguments]
 ```
 
-See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safety boundaries.
+See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 
 ## Actions
 
@@ -133,7 +133,9 @@ interactive mode ─────────→ 1-second per-target captures + m
 
 Opening the dashboard loads Vue from a CDN, requires no Node.js build, discovers registered tool schemas and connected targets, and displays per-device command history. Interactive mode captures its target once per second without adding those background captures to command history; clicks, drags, holds, and keyboard input are sent through the normal device tools. Its browser event stream is only for viewer updates; MCP remains Streamable HTTP. On desktop, each device workspace has a maximum height of 900 px, with command history scrolling inside it.
 
-Multi-touch uses a bundled Android helper run over ADB; no APK installation or root is needed. See [the skill's multi-touch schema](SKILL.md#multi-touch-and-pinch-to-zoom) for CLI and MCP usage. In dashboard interactive mode, use two fingers or hold **Alt** while dragging with a mouse: the second finger mirrors the first around the screen center. Gestures replay along straight paths when all fingers lift, with a maximum duration of three seconds. Restart an existing MCP server to register the new `multi_touch` tool.
+Multi-touch uses a bundled Android helper run over ADB; no APK installation or root is needed. See [the skill's gesture schema](SKILL.md#gestures) for CLI and MCP usage. In dashboard interactive mode, use two fingers or hold **Alt** while dragging with a mouse: the second finger mirrors the first around the screen center. Gestures replay along straight paths when all fingers lift, with a maximum duration of three seconds. Restart an existing MCP server after upgrading to register new tools.
+
+The multi-touch helper requires Android 6.0/API 23+. To rebuild `scripts/multitouch/multitouch.dex`, run `python3 scripts/multitouch/build.py` with a JDK and Android SDK platform/build-tools installed; use `JAVA_HOME` and `ANDROID_SDK_ROOT` (or `ANDROID_HOME`) to select them.
 
 A region screenshot is drawn at its position over the dimmed last full screenshot, outlined, until the next full screenshot replaces it; without a full screenshot it is placed on a blank screen of the reported size. Description overlays, gesture animations, and interactive input keep using full-screen device coordinates.
 
