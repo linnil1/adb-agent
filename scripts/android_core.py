@@ -27,7 +27,7 @@ ACTIONS = (
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom-in", "zoom-out",
     "logs", "crash-logs", "clear-logs",
     "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
-    "wait-for-ui",
+    "wait-for-ui", "connect", "disconnect", "pair",
 )
 ACTION_FIELDS = {
     "list-targets": set(), "set-default-target": set(), "status": set(),
@@ -49,8 +49,9 @@ ACTION_FIELDS = {
     "screen-status": set(), "wake-screen": set(), "sleep-screen": set(),
     "rotate-screen": {"rotation"},
     "wait-for-ui": {"text", "description", "resource_id", "state", "wait_timeout"},
+    "connect": {"address"}, "disconnect": {"address"}, "pair": {"address", "pair_code"},
 }
-SERIAL_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,128}$")
+SERIAL_RE = re.compile(r"^[A-Za-z0-9.:\[\]_-]{1,259}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
 COMPONENT_RE = re.compile(
     r"(?P<component>(?P<package>[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)/"
@@ -129,16 +130,16 @@ def scrub_error(stderr: bytes, code: int | None) -> str:
     return f"adb command failed: {first}"
 
 
-def run_process(argv: list[str], timeout: float) -> bytes:
+def run_process(argv: list[str], timeout: float, *, input_data: bytes | None = None) -> bytes:
     process = subprocess.Popen(
         argv,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(input=input_data, timeout=timeout)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -216,6 +217,9 @@ class Adb:
     def run_tail(self, args: list[str], *, serial: str) -> tuple[bytes, bool]:
         validate_serial(serial)
         return run_process_tail([self.executable, "-s", serial, *args], self.timeout, LOG_SCAN_BYTES)
+
+    def run_input(self, args: list[str], data: bytes) -> bytes:
+        return run_process([self.executable, *args], self.timeout, input_data=data)
 
 
 def validate_serial(serial: str) -> None:
@@ -976,6 +980,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resource-id", help="exact resource ID for wait-for-ui")
     parser.add_argument("--state", choices=("present", "gone", "enabled"))
     parser.add_argument("--wait-timeout", type=float, help="UI wait budget in seconds, >0 to 300 (default 30)")
+    parser.add_argument("--address", help="ADB endpoint HOST:PORT, or [IPv6]:PORT, on the server's network")
+    parser.add_argument("--pair-code", help="six-digit pairing code; interactive CLI prompts when omitted")
     return parser
 
 
@@ -989,6 +995,19 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
     validate_action_args(args)
+    if args.action in {"connect", "disconnect", "pair"}:
+        if __package__:
+            from .android_connection import validate_address
+        else:
+            from android_connection import validate_address
+        require(args.address, "--address")
+        args.address = validate_address(args.address)
+        if args.target is not None:
+            raise ControlError("connection actions use --address, not --target")
+        if args.action == "pair":
+            require(args.pair_code, "--pair-code")
+            if not re.fullmatch(r"[0-9]{6}", args.pair_code):
+                raise ControlError("pairing code must contain exactly six digits")
     if args.action == "wait-for-ui":
         selectors = [args.text, args.description, args.resource_id]
         if not any(value is not None for value in selectors):
@@ -1049,6 +1068,12 @@ def prepare_action(args: argparse.Namespace) -> None:
 def execute(args: argparse.Namespace) -> object:
     prepare_action(args)
     adb = Adb(resolve_adb(args.adb), args.timeout)
+    if args.action in {"connect", "disconnect", "pair"}:
+        if __package__:
+            from .android_connection import connection_action
+        else:
+            from android_connection import connection_action
+        return connection_action(adb, args.action, args.address, args.pair_code)
     if args.action == "list-targets":
         return list_targets(adb)
     return device_action(args, adb)
@@ -1062,5 +1087,6 @@ def action_args(action: str, *, adb_path: str | None = None, timeout: float = DE
             if value:
                 argv.append("--" + name.replace("_", "-"))
         elif value is not None:
-            argv += ["--" + name.replace("_", "-"), json.dumps(value) if isinstance(value, (list, dict)) else str(value)]
+            encoded = json.dumps(value) if isinstance(value, (list, dict)) else str(value)
+            argv.append("--" + name.replace("_", "-") + "=" + encoded)
     return build_parser().parse_args(argv)

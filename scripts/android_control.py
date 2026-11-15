@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import getpass
 
 if __package__:
     from .android_core import *
@@ -40,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.host is not None or args.port is not None:
             raise ControlError("--host and --port require --mcp")
+        if args.action == "pair" and args.address is not None and args.pair_code is None:
+            if not sys.stdin.isatty():
+                raise ControlError("--pair-code is required for non-interactive pairing")
+            args.pair_code = getpass.getpass("Pairing code: ")
         discovered = None if args.direct or args.adb else discover_server()
         emit(execute_via_server(args, discovered) if discovered else execute(args))
     return 0

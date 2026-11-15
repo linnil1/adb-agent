@@ -25,6 +25,8 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 |---|---|---|
 | `list-targets`, `status`, `list-packages`, `current-focus`, `home`, `back` | none | none |
 | `set-default-target` | `--target TARGET` | none |
+| `connect`, `disconnect` | `--address HOST:PORT` | none |
+| `pair` | `--address HOST:PAIRING_PORT` | `--pair-code CODE` (six digits; interactive CLI prompts if omitted) |
 | `screen-status`, `wake-screen`, `sleep-screen` | none | none |
 | `rotate-screen` | `--rotation 0\|90\|180\|270\|auto` | none |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
@@ -44,6 +46,10 @@ Pass only arguments for the selected action. Coordinates and durations are non-n
 | `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) |
 | `logs`, `crash-logs` | none | `--name PACKAGE_OR_FRAGMENT --priority V\|D\|I\|W\|E\|F --match TEXT --lines INT --output PATH` |
 | `clear-logs` | none | none |
+
+## Connections
+
+Use explicit `--address HOST:PORT` or `[IPv6]:PORT`, without `--target`. No connected device is required. Addresses, including `localhost`, are reached from the MCP server's ADB host (the local host for direct CLI). Pairing and connection ports can differ. MCP requires `pair_code`; CLI can prompt without echo. Codes are omitted from tool history/results.
 
 ## Screen inspection
 

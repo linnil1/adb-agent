@@ -38,10 +38,22 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         from mcp.server.mcpserver.exceptions import ToolError
         from starlette.requests import Request
         from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
+        from pydantic import ValidationError
     except ImportError:
         raise ControlError(
             "MCP support requires the 'mcp' package; install requirements-mcp.txt"
         ) from None
+
+    class DeviceMCPServer(MCPServer):
+        async def call_tool(self, name, arguments, context=None):
+            try:
+                return await super().call_tool(name, arguments, context)
+            except ToolError as error:
+                # Pydantic errors include rejected values (and sometimes the
+                # entire input dict), so pairing validation needs a fixed error.
+                if name == "pair" and isinstance(error.__cause__, ValidationError):
+                    raise ToolError("Invalid pairing arguments; provide address and a six-digit string pair_code") from None
+                raise
 
     resolved_adb = resolve_adb(adb_path)
     server_url = advertised_server_url(host, port)
@@ -61,7 +73,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         "tool_capture", default=None,
     )
     latest_descriptions: dict[str, dict[str, object]] = {}
-    server = MCPServer(
+    server = DeviceMCPServer(
         SERVER_NAME,
         instructions="Inspect and control an authorized Android device over ADB.",
     )
@@ -73,7 +85,8 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
             viewer_events.append({"id": viewer_sequence, "type": event_type, **values})
 
     def record(action: str, values: dict[str, object], ok: bool, error: str | None = None) -> None:
-        safe_values = {key: value for key, value in values.items() if value is not None}
+        safe_values = {key: value for key, value in values.items()
+                       if value is not None and key != "pair_code"}
         entry: dict[str, object] = {
             "time": datetime.now(timezone.utc).isoformat(),
             "action": action,
@@ -150,6 +163,21 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def list_targets_tool() -> list[dict[str, str]]:
         """List Android devices visible to ADB."""
         return call("list-targets")  # type: ignore[return-value]
+
+    @server.tool(name="connect")
+    def connect_tool(address: str) -> dict[str, object]:
+        """Connect ADB to HOST:PORT or [IPv6]:PORT and verify readiness. Addresses are reached from this MCP server, including localhost."""
+        return call("connect", address=address)
+
+    @server.tool(name="disconnect")
+    def disconnect_tool(address: str) -> dict[str, object]:
+        """Disconnect only the explicit ADB endpoint; never disconnect all devices."""
+        return call("disconnect", address=address)
+
+    @server.tool(name="pair")
+    def pair_tool(address: str, pair_code: str) -> dict[str, object]:
+        """Pair ADB using a pairing endpoint and six-digit code. Pairing and connection ports may differ; code is omitted from tool history and results."""
+        return call("pair", address=address, pair_code=pair_code)
 
     @server.tool(name="set_default_target")
     def set_default_target_tool(target: str) -> dict[str, object]:

@@ -103,6 +103,8 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
     request_timeout = max(args.timeout, 1)
     if args.action == "wait-for-ui":
         request_timeout = max(request_timeout, args.wait_timeout + args.timeout + 5)
+    elif args.action in {"connect", "disconnect", "pair"}:
+        request_timeout = max(request_timeout, 2 * args.timeout + 10)
     try:
         with urlrequest.urlopen(request, timeout=request_timeout) as response:
             body = read_json_response(response)

@@ -163,3 +163,17 @@ assert.equal(app.screens['device-b'].effect.fingers.length, 2);
 const arrayTool = {inputSchema: {properties: {fingers: {type: 'array'}}}};
 assert.equal(JSON.stringify(app.argumentsFor(arrayTool, {fingers: JSON.stringify(calls[0].args.fingers)}).fingers), JSON.stringify(calls[0].args.fingers));
 console.log('Passed: multi-touch batching, cancellation, Alt-drag, JSON tool fields, and single-touch compatibility.');
+
+// Discard pairing codes from the form after both successful and failed calls.
+(async () => {
+  app.panels['pair-test'] = {selectedToolName: 'pair', toolArguments: {address: 'phone.local:5556', pair_code: '654321'}};
+  app.callTool = async () => ({structuredContent: {paired: true}});
+  await app.invokeSelected('pair-test');
+  assert.equal(app.panels['pair-test'].toolArguments.pair_code, undefined);
+  assert.equal(app.panels['pair-test'].resultText.includes('654321'), false);
+  app.panels['pair-test'].toolArguments.pair_code = '654321';
+  app.callTool = async () => { throw new Error('Pairing failed'); };
+  await app.invokeSelected('pair-test');
+  assert.equal(app.panels['pair-test'].toolArguments.pair_code, undefined);
+  console.log('Passed: pairing codes are discarded from dashboard forms after success or failure.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

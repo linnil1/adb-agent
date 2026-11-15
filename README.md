@@ -13,6 +13,9 @@ See [`SKILL.md`](SKILL.md) for the complete argument schema, workflow, and safet
 | Action | Summary |
 |---|---|
 | `list-targets` | List connected ADB devices and their states. |
+| `connect` | Connect to `--address HOST:PORT` and verify device readiness. |
+| `disconnect` | Disconnect only the explicit `--address HOST:PORT`. |
+| `pair` | Pair with a wireless-debugging endpoint and six-digit code. |
 | `set-default-target` | Remember one ready target for one hour. |
 | `status` | Report device state, model, Android version, and battery information. |
 | `screen-status` | Read default-display power, interactive state, logical size, and rotation. |
@@ -49,6 +52,16 @@ python3 scripts/android_control.py --action crash-logs --name com.example.app --
 ```
 
 `--match` is a literal text filter. Crash filters select reports with their stack context; line/byte limits may cut a report and set `truncated`. App logs resolve currently running package processes; crash matching also works after the app exits. Output defaults to 200 physical lines, at most 5000 lines/256 KiB; capture retains the latest 4 MiB before filtering and reports `scan_truncated` if older bytes were discarded. The CLI saves `--output` on the client machine even when forwarded through the server. MCP exposes `logs`, `crash_logs`, and `clear_logs`.
+
+Connection actions work before a device is connected and run on the same host as the MCP server's ADB. Thus `localhost` is the server's localhost. Use an explicit `--address HOST:PORT` (or `[IPv6]:PORT`) rather than `--target`. Pairing uses the phone's pairing port, which can differ from its connection port:
+
+```bash
+python3 scripts/android_control.py --action connect --address phone.local:5555
+python3 scripts/android_control.py --action disconnect --address phone.local:5555
+python3 scripts/android_control.py --action pair --address phone.local:37000
+```
+
+Interactive CLI pairing prompts for the code without echo; automation and MCP supply `pair_code` (CLI `--pair-code`). The code is sent to ADB via stdin, omitted from tool history/results, and masked in dashboard forms. Pairing doesn't imply a ready connection; call `connect` afterward. These actions preserve the remembered default target.
 
 Selector waits search the current accessibility tree without navigating or tapping. Combine `--text`, `--description`, and `--resource-id` with AND; use `--state present|gone|enabled` and `--wait-timeout` (default 30 seconds, maximum 300). Failed or malformed captures never count as disappearance. MCP exposes `wait_for_ui`; successful results include matching elements, coordinates, attempt count, and elapsed time.
 

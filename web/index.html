@@ -173,7 +173,7 @@
                   <option v-if="!field.required" value="">Unset</option>
                   <option v-for="choice in field.schema.enum" :key="choice" :value="choice">{{ choice }}</option>
                 </select>
-                <input v-else v-model="panels[viewerTarget].toolArguments[field.name]" :type="numeric(field.schema) ? 'number' : 'text'" :required="field.required" :placeholder="field.schema.description || field.schema.title || field.name">
+                <input v-else v-model="panels[viewerTarget].toolArguments[field.name]" :type="field.name === 'pair_code' ? 'password' : numeric(field.schema) ? 'number' : 'text'" :required="field.required" :placeholder="field.schema.description || field.schema.title || field.name">
               </label>
               <button :disabled="panels[viewerTarget].busy || !selectedToolFor(viewerTarget)">Run {{ panels[viewerTarget].selectedToolName }}</button>
             </form>
@@ -347,7 +347,10 @@ createApp({
         }
         return result;
       } catch (error) { panel.error = error.message; }
-      finally { panel.busy = false; }
+      finally {
+        if (name === 'pair') delete panel.toolArguments.pair_code;
+        panel.busy = false;
+      }
     },
     async clearViewer(target, kind) {
       const panel = this.panels[target];
