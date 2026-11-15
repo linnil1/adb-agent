@@ -24,7 +24,7 @@ ACTIONS = (
     "list-targets", "set-default-target", "status", "list-packages", "current-focus",
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
     "press-key", "home", "back", "launch-app", "force-stop-app", "open-url",
-    "start-screen-record", "stop-screen-record", "multi-touch", "zoom-in", "zoom-out",
+    "start-screen-record", "stop-screen-record", "multi-touch", "zoom",
     "logs", "crash-logs", "clear-logs",
     "screen-status", "wake-screen", "sleep-screen", "rotate-screen",
     "wait-for-ui", "connect", "disconnect", "pair",
@@ -37,8 +37,7 @@ ACTION_FIELDS = {
     "describe-screen": {"format"}, "tap": {"x", "y"},
     "swipe": {"x1", "y1", "x2", "y2", "duration"},
     "multi-touch": {"fingers", "duration"},
-    "zoom-in": {"x", "y", "distance", "duration"},
-    "zoom-out": {"x", "y", "distance", "duration"},
+    "zoom": {"x", "y", "direction", "distance", "duration"},
     "long-press": {"x", "y", "duration"}, "type-text": {"text"},
     "press-key": {"key"}, "home": set(), "back": set(),
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
@@ -784,8 +783,7 @@ def require(value: object, flag: str) -> object:
 def validate_action_args(args: argparse.Namespace) -> None:
     required = {
         "rotate-screen": ("rotation",),
-        "zoom-in": ("x", "y"),
-        "zoom-out": ("x", "y"),
+        "zoom": ("x", "y", "direction"),
         "multi-touch": ("fingers",),
         "tap": ("x", "y"),
         "swipe": ("x1", "y1", "x2", "y2"),
@@ -810,11 +808,13 @@ def validate_action_args(args: argparse.Namespace) -> None:
         raise ControlError(f"argument(s) not valid for {args.action}: {flags}")
 
 
-def zoom_paths(action: str, x: int, y: int, distance: int, width: int, height: int) -> list[dict[str, int]]:
+def zoom_paths(direction: str, x: int, y: int, distance: int, width: int, height: int) -> list[dict[str, int]]:
+    if direction not in {"in", "out"}:
+        raise ControlError("zoom direction must be in or out")
     near, far = 100, 100 + distance
     if not (0 <= x - far and x + far < width and 0 <= y < height):
         raise ControlError("zoom gesture exceeds the display; move its center or reduce --distance")
-    start, end = (near, far) if action == "zoom-in" else (far, near)
+    start, end = (near, far) if direction == "in" else (far, near)
     return [{"x1": x + sign * start, "y1": y, "x2": x + sign * end, "y2": y}
             for sign in (-1, 1)]
 
@@ -917,11 +917,11 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
     elif action == "multi-touch":
         inject_multi_touch(adb, serial, args.fingers, args.duration)
         return {"target": serial, "action": action, "fingers": args.fingers, "duration_ms": args.duration}
-    elif action in {"zoom-in", "zoom-out"}:
+    elif action == "zoom":
         _, screen = capture_screen(adb, serial)
-        fingers = zoom_paths(action, args.x, args.y, args.distance, *screen)
+        fingers = zoom_paths(args.direction, args.x, args.y, args.distance, *screen)
         inject_multi_touch(adb, serial, fingers, args.duration)
-        return {"target": serial, "action": action, "center": [args.x, args.y],
+        return {"target": serial, "action": action, "direction": args.direction, "center": [args.x, args.y],
                 "distance": args.distance, "fingers": fingers, "duration_ms": args.duration}
     elif action == "long-press":
         shell(adb, serial, ["input", "swipe", str(args.x), str(args.y), str(args.x), str(args.y), str(args.duration)])
@@ -1008,7 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pair-code", help="six-digit pairing code; interactive CLI prompts when omitted")
     parser.add_argument("--stream", choices=tuple(AUDIO_STREAMS), help="get-volume: all streams by default; set-volume: media by default")
     parser.add_argument("--level", type=int, help="volume index within the phone's reported range")
-    parser.add_argument("--direction", choices=("raise", "lower"))
+    parser.add_argument("--direction", choices=("in", "out", "raise", "lower"),
+                        help="zoom: in/out; set-volume: raise/lower")
     parser.add_argument("--muted", choices=("true", "false"), help="explicit stream mute state")
     parser.add_argument("--ringer-mode", choices=("normal", "vibrate", "silent"))
     parser.add_argument("--dnd-mode", choices=("off", "priority", "alarms", "none"), help="Do Not Disturb interruption filter")
@@ -1071,7 +1072,9 @@ def prepare_action(args: argparse.Namespace) -> None:
         screenshot_region(args.x1, args.y1, args.x2, args.y2)
     if args.action in {"swipe", "long-press", "multi-touch"} and args.duration is None:
         args.duration = 1000 if args.action == "long-press" else 300
-    if args.action in {"zoom-in", "zoom-out"}:
+    if args.action == "zoom":
+        if args.direction not in {"in", "out"}:
+            raise ControlError("zoom direction must be in or out")
         if args.distance is None:
             args.distance = 150
         if args.duration is None:

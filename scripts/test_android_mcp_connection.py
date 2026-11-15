@@ -108,6 +108,20 @@ else:
         self.assertNotIn("pair_code", serialized)
         self.assertNotIn("654321", serialized)
 
+    def test_zoom_schema_has_one_tool_with_explicit_direction(self):
+        tools = {tool["name"]: tool for tool in self.get("/api/tools")["tools"]}
+        self.assertNotIn("zoom_in", tools)
+        self.assertNotIn("zoom_out", tools)
+        schema = tools["zoom"]["inputSchema"]
+        self.assertTrue({"x", "y", "direction"} <= set(schema["required"]))
+        self.assertEqual(schema["properties"]["direction"]["enum"], ["in", "out"])
+        for direction in (None, "raise", "lower"):
+            args = {"x": 500, "y": 900}
+            if direction is not None:
+                args["direction"] = direction
+            result = self.call("zoom", args)
+            self.assertFalse(result.get("ok") and not result.get("result", {}).get("isError"), result)
+
     def test_pair_validation_and_adb_errors_never_echo_input_codes(self):
         for args, code in (
             ({"pair_code": "654321"}, "654321"),

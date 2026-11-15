@@ -96,43 +96,71 @@ class AndroidControlTests(unittest.TestCase):
                 android.prepare_action(android.action_args("multi-touch", fingers=[valid, valid], duration=duration))
 
     def test_zoom_distance_and_reverse_paths(self):
-        inward = android.zoom_paths("zoom-in", 500, 900, 150, 1080, 1920)
+        inward = android.zoom_paths("in", 500, 900, 150, 1080, 1920)
         self.assertEqual(inward, [
             {"x1": 400, "y1": 900, "x2": 250, "y2": 900},
             {"x1": 600, "y1": 900, "x2": 750, "y2": 900},
         ])
-        outward = android.zoom_paths("zoom-out", 500, 900, 150, 1080, 1920)
+        outward = android.zoom_paths("out", 500, 900, 150, 1080, 1920)
         for start, reverse in zip(inward, outward):
             self.assertEqual(start["x1"], reverse["x2"])
             self.assertEqual(start["x2"], reverse["x1"])
-        for action in ("zoom-in", "zoom-out"):
-            args = android.action_args(action, x=500, y=900)
+        for direction in ("in", "out"):
+            args = android.action_args("zoom", direction=direction, x=500, y=900)
             android.prepare_action(args)
             self.assertEqual((args.distance, args.duration), (150, 500))
         for x, y, distance in ((249, 900, 150), (830, 900, 150), (500, 1920, 150), (500, 900, 500)):
             with self.assertRaises(android.ControlError):
-                android.zoom_paths("zoom-in", x, y, distance, 1080, 1920)
+                android.zoom_paths("in", x, y, distance, 1080, 1920)
 
     def test_zoom_validation_and_bounds_before_injection(self):
         for values in ({"distance": 0}, {"distance": -1}, {"duration": 0},
-                       {"duration": 3001}, {"x": 65536}, {"y": -1}):
+                       {"duration": 3001}, {"x": 65536}, {"y": -1},
+                       {"direction": None}, {"direction": "raise"}, {"direction": "lower"}):
             with self.subTest(values=values), self.assertRaises(android.ControlError):
-                args = android.action_args("zoom-in", **({"x": 500, "y": 900} | values))
+                args = android.action_args("zoom", **({"x": 500, "y": 900, "direction": "in"} | values))
                 android.prepare_action(args)
-        args = android.action_args("zoom-in", x=500, y=900, target="device-a")
+        args = android.action_args("zoom", direction="in", x=500, y=900, target="device-a")
         android.prepare_action(args)
         adb = self.fake_adb(("device-a", "device"))
         with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
              patch("scripts.android_core.inject_multi_touch") as inject:
             result = android.device_action(args, adb)
             inject.assert_called_once_with(adb, "device-a", result["fingers"], 500)
-            self.assertEqual(result["action"], "zoom-in")
+            self.assertEqual(result["action"], "zoom")
+            self.assertEqual(result["direction"], "in")
+        args.direction = "out"
+        with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
+             patch("scripts.android_core.inject_multi_touch") as inject:
+            result = android.device_action(args, adb)
+            self.assertEqual(result["direction"], "out")
+            self.assertEqual(result["fingers"], android.zoom_paths("out", 500, 900, 150, 1080, 1920))
+            inject.assert_called_once_with(adb, "device-a", result["fingers"], 500)
         args.x = 50
         with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
              patch("scripts.android_core.inject_multi_touch") as inject:
             with self.assertRaises(android.ControlError):
                 android.device_action(args, adb)
             inject.assert_not_called()
+
+    def test_zoom_forwarding_and_direction_validation(self):
+        for direction in ("in", "out"):
+            args = android.build_parser().parse_args([
+                "--action", "zoom", "--direction", direction, "--x", "500", "--y", "900",
+                "--target", "device-a",
+            ])
+            response = io.BytesIO(json.dumps({
+                "ok": True, "result": {"structuredContent": {"action": "zoom", "direction": direction}},
+            }).encode())
+            with patch.object(android.urlrequest, "urlopen", return_value=response) as request:
+                result = android.execute_via_server(args, "http://127.0.0.1:8000")
+            self.assertEqual(result["direction"], direction)
+            self.assertEqual(json.loads(request.call_args.args[0].data), {
+                "name": "zoom", "arguments": {"x": 500, "y": 900, "direction": direction,
+                                               "distance": 150, "duration": 500, "target": "device-a"},
+            })
+            with self.assertRaises(android.ControlError):
+                android.prepare_action(android.action_args("set-volume", direction=direction))
 
     def test_volume_and_playback_keys_dispatch_without_claiming_verification(self):
         for key, code in [("volume-up", 24), ("volume-down", 25), ("volume-mute", 164),

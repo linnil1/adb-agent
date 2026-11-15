@@ -35,7 +35,7 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `tap` | `--x INT --y INT` | none |
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` (default 300) |
 | `multi-touch` | `--fingers JSON` | `--duration INT` (default 300, range 1-3000) |
-| `zoom-in`, `zoom-out` | `--x INT --y INT` center | `--distance INT` (default 150); `--duration INT` (default 500, range 1-3000) |
+| `zoom` | `--x INT --y INT` center; `--direction in\|out` | `--distance INT` (default 150); `--duration INT` (default 500, range 1-3000) |
 | `long-press` | `--x INT --y INT` | `--duration INT` (default 1000) |
 | `type-text` | `--text STRING` | none |
 | `press-key` | `--key KEY` | none |

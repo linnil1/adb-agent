@@ -31,7 +31,7 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `tap` | Tap one screen coordinate. |
 | `swipe` | Swipe between two coordinates. |
 | `multi-touch` | Move 2-10 fingers together for pinch/zoom or multi-finger swipes. |
-| `zoom-in` / `zoom-out` | Pinch around `--x --y`; `--distance` is each finger's travel in pixels (default 150). |
+| `zoom` | Zoom `--direction in\|out` around `--x --y`; `--distance` is each finger's travel in pixels (default 150). |
 | `long-press` | Hold one screen coordinate. |
 | `type-text` | Enter text through Android input. |
 | `press-key` | Send navigation, editing, volume, or media playback keys. |
