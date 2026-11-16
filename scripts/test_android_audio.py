@@ -269,7 +269,29 @@ class AndroidAudioTests(unittest.TestCase):
              self.assertRaisesRegex(core.ControlError, "sent but not verified"):
             audio.set_volume(FakeAdb(), "phone", level=5)
 
-    def test_cli_default_validation_and_forwarded_false(self):
+    def test_cli_and_direct_defaults_validation_and_forwarded_false(self):
+        for muted, stream in ((True, None), (False, None), ("true", "media"), ("false", "media")):
+            with self.subTest(direct_muted=muted, stream=stream):
+                args = core.action_args("set-volume", target="phone", stream=stream)
+                args.muted = muted
+                expected = muted is True or muted == "true"
+                adb = FakeAdb(muted=not expected)
+                # No prepare_action/execute call: direct dispatch must normalize too.
+                result = core.device_action(args, adb)
+                self.assertTrue(result["verified"])
+                self.assertIs(args.muted, expected)
+                self.assertEqual(args.stream, "media")
+                self.assertIs(result["streams"]["media"]["muted"], expected)
+                self.assertEqual(adb.mutations(), [["shell", "cmd", "audio",
+                                                  "adj-mute" if expected else "adj-unmute", "3"]])
+        for invalid in ("invalid", 0, 1):
+            with self.subTest(direct_muted=invalid):
+                args = core.action_args("set-volume", target="phone")
+                args.muted = invalid
+                adb = FakeAdb()
+                with self.assertRaisesRegex(core.ControlError, "muted must be true or false"):
+                    core.device_action(args, adb)
+                self.assertEqual(adb.calls, [])
         args = core.action_args("set-volume", muted=False, target="phone")
         core.prepare_action(args)
         self.assertEqual(args.stream, "media")

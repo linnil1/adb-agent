@@ -4,3 +4,6 @@ android-screen.png
 android-screen.mp4
 *.log
 .mcp.json
+.coverage
+.coverage.*
+htmlcov/

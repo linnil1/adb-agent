@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 
 from scripts import android_control as android
+from scripts.test_support import python_command
 
 
 MODULE_PATH = Path(__file__).with_name("android_control.py")
@@ -186,7 +187,7 @@ class AndroidControlTests(unittest.TestCase):
 
     def test_direct_cli_entrypoint_loads_split_modules(self):
         result = subprocess.run(
-            [sys.executable, str(MODULE_PATH), "--help"],
+            python_command(MODULE_PATH, "--help"),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

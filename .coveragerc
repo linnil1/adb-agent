@@ -1,0 +1,11 @@
+[run]
+branch = True
+source = scripts
+omit =
+    scripts/test_*.py
+    scripts/multitouch/build.py
+parallel = True
+sigterm = True
+
+[report]
+show_missing = True

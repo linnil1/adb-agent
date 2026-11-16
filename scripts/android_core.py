@@ -830,6 +830,8 @@ def inject_multi_touch(adb: Adb, serial: str, fingers: list[dict[str, int]], dur
 
 
 def device_action(args: argparse.Namespace, adb: Adb) -> object:
+    """Validate and normalize arguments for direct callers as well as execute()."""
+    prepare_action(args)
     if args.action == "set-default-target":
         return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
@@ -1031,7 +1033,7 @@ def prepare_action(args: argparse.Namespace) -> None:
     if args.action == "set-screen" and args.state not in {"awake", "asleep"}:
         raise ControlError("set-screen state must be awake or asleep")
     if args.action == "set-volume":
-        if isinstance(args.muted, str):
+        if isinstance(args.muted, str) and args.muted in {"true", "false"}:
             args.muted = args.muted == "true"
         if args.stream is None:
             args.stream = "media"

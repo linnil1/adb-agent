@@ -148,5 +148,24 @@ MIT. See [LICENSE](LICENSE).
 ```bash
 python3 -m unittest discover -s scripts -p 'test_android_*.py'
 node scripts/test_viewer.js
-python3 scripts/android_control.py --action list-targets
 ```
+
+Tests use fake ADB and do not need or control a phone. The daemon tests require
+`requirements-mcp.txt` in the Python environment running the tests; they otherwise
+skip. They start one local daemon, exercise `/mcp` and the dashboard API, and stop
+it afterward. CLI tests cover routing, startup, pairing prompts, and exit codes.
+
+To measure Python line and branch coverage, install `coverage` in that same
+environment and run:
+
+```bash
+python3 -m coverage erase
+COVERAGE_PROCESS_START="$PWD/.coveragerc" python3 -m coverage run -m unittest discover -s scripts -p 'test_android_*.py'
+python3 -m coverage combine
+python3 -m coverage report
+```
+
+The test subprocess helper uses `COVERAGE_PROCESS_START` to include CLI and daemon
+processes. The report excludes tests and the helper build script; it does not
+measure dashboard JavaScript or the Android Java helper. For an optional manual
+device check, run `python3 scripts/android_control.py --action list-targets`.
