@@ -20,6 +20,7 @@ def wait_for_ui(adb: Adb, serial: str, *, text: str | None = None,
     deadline = started + wait_timeout
     attempts = successful_captures = 0
     last_error = None
+    deadline_reached = False
     while time.monotonic() < deadline:
         attempts += 1
         try:
@@ -31,6 +32,7 @@ def wait_for_ui(adb: Adb, serial: str, *, text: str | None = None,
             if root.tag != "hierarchy":
                 raise ControlError("UI capture returned no hierarchy root")
             if time.monotonic() >= deadline:
+                deadline_reached = True
                 break
             successful_captures += 1
             last_error = None
@@ -47,12 +49,17 @@ def wait_for_ui(adb: Adb, serial: str, *, text: str | None = None,
                         "elapsed_seconds": round(time.monotonic() - started, 3),
                         "elements": [] if state == "gone" else matched}
         except ControlError as error:
-            last_error = str(error)
+            if time.monotonic() >= deadline and (
+                str(error) == "UI capture deadline reached" or str(error).startswith("adb timed out after ")
+            ):
+                deadline_reached = True
+            else:
+                last_error = str(error)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         time.sleep(min(1.0, remaining))
-    if not successful_captures:
+    if not successful_captures and (last_error or not deadline_reached):
         raise ControlError("could not inspect UI while waiting: " + (last_error or "capture exceeded wait timeout"))
     detail = f"; last capture failed: {last_error}" if last_error else ""
     raise ControlError(f"wait-for-ui timed out after {wait_timeout:g}s waiting for {state}{detail}")

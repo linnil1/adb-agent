@@ -89,6 +89,9 @@ class AndroidWaitTests(unittest.TestCase):
         result = self.run_wait([hierarchy(node(text="A & B", **{"content-desc": "History > 0"}))],
                                text="A & B", description="History > 0")
         self.assertEqual(result["elements"][0]["text"], "A & B")
+        xml = '''<hierarchy><node text='say "hi" >x' bounds='[0,0][100,40]' enabled='true'/></hierarchy>'''
+        result = self.run_wait([xml], text='say "hi" >x')
+        self.assertEqual(result["elements"][0]["text"], 'say "hi" >x')
 
     def test_late_capture_cannot_succeed_after_deadline(self):
         clock = Clock()
@@ -97,12 +100,29 @@ class AndroidWaitTests(unittest.TestCase):
             return hierarchy(node(text="Ready"))
         with patch("scripts.android_wait.time", clock), \
              patch("scripts.android_wait.dump_ui", side_effect=late_dump):
-            with self.assertRaisesRegex(core.ControlError, "capture exceeded"):
+            with self.assertRaisesRegex(core.ControlError, "timed out after 3s"):
                 wait.wait_for_ui(object(), "phone", text="Ready", wait_timeout=3)
+        for initial in ([], [hierarchy(node(text="Other"))]):
+            clock = Clock()
+            captures = iter(initial)
+            def bounded_dump(*args, **kwargs):
+                snapshot = next(captures, None)
+                if snapshot is not None:
+                    return snapshot
+                clock.now = 3
+                raise core.ControlError("UI capture deadline reached")
+            with self.subTest(successful_captures=len(initial)), \
+                 patch("scripts.android_wait.time", clock), \
+                 patch("scripts.android_wait.dump_ui", side_effect=bounded_dump):
+                with self.assertRaisesRegex(core.ControlError, "timed out after 3s") as raised:
+                    wait.wait_for_ui(object(), "phone", text="Ready", wait_timeout=3)
+                self.assertNotIn("last capture failed", str(raised.exception))
 
     def test_wait_arguments_and_deadline_validation(self):
-        args = core.action_args("wait-for-ui", text="Ready")
-        core.prepare_action(args)
+        args = core.action_args("wait-for-ui", text="Ready", target="phone")
+        with patch("scripts.android_wait.dump_ui", return_value=hierarchy(node(text="Ready"))):
+            result = core.device_action(args, object())
+        self.assertEqual(result["state"], "present")
         self.assertEqual((args.state, args.wait_timeout), ("present", 30))
         for values in ({}, {"text": ""}, {"text": "Ready", "description": ""},
                        {"text": "Ready", "state": "awake"}, {"text": "Ready", "state": "asleep"},

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import html
+import hashlib
 import json
 import math
 import os
@@ -15,6 +15,7 @@ import struct
 import subprocess
 import time
 import zlib
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -93,6 +94,10 @@ class ControlError(RuntimeError):
 
 
 class AmbiguousTargetError(ControlError):
+    pass
+
+
+class LauncherNotFoundError(ControlError):
     pass
 
 
@@ -374,11 +379,15 @@ def shell(adb: Adb, serial: str, args: list[str], timeout: float | None = None) 
 def extract_node_tags(xml: str) -> list[str]:
     tags: list[str] = []
     for match in re.finditer(r"<node(?=[\s/>])", xml, re.IGNORECASE):
-        in_quote = False
+        quote = None
         for index in range(match.end(), len(xml)):
-            if xml[index] == '"':
-                in_quote = not in_quote
-            elif xml[index] == ">" and not in_quote:
+            char = xml[index]
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in {'"', "'"}:
+                quote = char
+            elif char == ">":
                 tags.append(xml[match.start():index + 1])
                 break
         else:
@@ -387,23 +396,31 @@ def extract_node_tags(xml: str) -> list[str]:
 
 
 def attribute(tag: str, name: str) -> str:
-    match = re.search(rf'(?:^|\s){re.escape(name)}="([^"]*)"', tag, re.IGNORECASE)
-    return html.unescape(match.group(1)) if match else ""
+    # Accept either XML quote style, even for a complete tag from a truncated dump.
+    opening = re.sub(r"/?>$", "/>", tag)
+    try:
+        return ET.fromstring(opening).get(name, "")
+    except ET.ParseError:
+        return ""
 
 
 def parse_ui_xml(xml: str, *, visible_only: bool = False) -> list[dict[str, object]]:
     elements: list[dict[str, object]] = []
     for tag in extract_node_tags(xml):
-        text = attribute(tag, "text")
-        description = attribute(tag, "content-desc")
-        resource_id = attribute(tag, "resource-id")
-        class_name = attribute(tag, "class")
-        clickable = attribute(tag, "clickable") == "true"
-        selected = attribute(tag, "selected") == "true"
-        scrollable = attribute(tag, "scrollable") == "true"
-        enabled = attribute(tag, "enabled") == "true"
-        checked = attribute(tag, "checked") == "true"
-        focusable = attribute(tag, "focusable") == "true"
+        try:
+            attrs = ET.fromstring(re.sub(r"/?>$", "/>", tag)).attrib
+        except ET.ParseError:
+            continue
+        text = attrs.get("text", "")
+        description = attrs.get("content-desc", "")
+        resource_id = attrs.get("resource-id", "")
+        class_name = attrs.get("class", "")
+        clickable = attrs.get("clickable") == "true"
+        selected = attrs.get("selected") == "true"
+        scrollable = attrs.get("scrollable") == "true"
+        enabled = attrs.get("enabled") == "true"
+        checked = attrs.get("checked") == "true"
+        focusable = attrs.get("focusable") == "true"
         states = [
             name for name, active in (
                 ("clickable", clickable),
@@ -416,11 +433,11 @@ def parse_ui_xml(xml: str, *, visible_only: bool = False) -> list[dict[str, obje
         ]
         if not text and not description and not resource_id and not clickable and not selected and not scrollable:
             continue
-        bounds = BOUNDS_RE.fullmatch(attribute(tag, "bounds"))
+        bounds = BOUNDS_RE.fullmatch(attrs.get("bounds", ""))
         if not bounds:
             continue
         x1, y1, x2, y2 = map(int, bounds.groups())
-        if visible_only and (attribute(tag, "visible-to-user") == "false" or x2 <= x1 or y2 <= y1):
+        if visible_only and (attrs.get("visible-to-user") == "false" or x2 <= x1 or y2 <= y1):
             continue
         elements.append({
             "label": text or description or class_name.rsplit(".", 1)[-1] or "element",
@@ -428,7 +445,7 @@ def parse_ui_xml(xml: str, *, visible_only: bool = False) -> list[dict[str, obje
             "description": description,
             "resource_id": resource_id,
             "class": class_name,
-            "package": attribute(tag, "package"),
+            "package": attrs.get("package", ""),
             "states": states,
             "bounds": [x1, y1, x2, y2],
             "center": [round((x1 + x2) / 2), round((y1 + y2) / 2)],
@@ -520,7 +537,7 @@ def capture_screen(
         "f=/data/local/tmp/android-control-screen-$$.raw; screencap \"$f\" || exit 1; "
         "set -- $(od -An -tu4 -N12 \"$f\"); w=$1; h=$2; "
         "s=$(($(wc -c < \"$f\") - w * h * 4)); echo \"$w $h $3 $s\"; "
-        f"if [ {y2} -le $h ]; then tail -c +$((s + {y1} * w * 4 + 1)) \"$f\" "
+        f"if [ {x2} -le $w ] && [ {y2} -le $h ]; then tail -c +$((s + {y1} * w * 4 + 1)) \"$f\" "
         f"| head -c $(({y2 - y1} * w * 4)) | gzip -1; fi; rm -f \"$f\""
     )
     output = adb.run(["exec-out", script], serial=serial, timeout=60)
@@ -650,18 +667,43 @@ def parse_current_focus(output: str) -> dict[str, str] | None:
     return None
 
 
-def resolve_package(adb: Adb, serial: str, query: str) -> str:
+def resolve_package(adb: Adb, serial: str, query: str, *, prefer_launchable: bool = False) -> str:
     installed = packages(adb, serial)
     exact = next((pkg for pkg in installed if pkg.lower() == query.lower()), None)
     if exact:
         return exact
     needle = query.lower()
-    matches = [pkg for pkg in installed if needle in pkg.lower() or needle in pkg.rsplit(".", 1)[-1].lower()]
+    matches = [pkg for pkg in installed if pkg.rsplit(".", 1)[-1].lower() == needle]
+    if not matches:
+        matches = [pkg for pkg in installed if needle in pkg.lower()]
     if len(matches) == 1:
         return matches[0]
     if not matches:
         raise ControlError(f"no package found for {query!r}")
-    raise ControlError(f"ambiguous app name {query!r}: {', '.join(matches[:5])}")
+    if prefer_launchable:
+        launchable = []
+        for package in matches:
+            try:
+                resolve_launcher(adb, serial, package)
+            except LauncherNotFoundError:
+                continue
+            launchable.append(package)
+        if len(launchable) == 1:
+            return launchable[0]
+        if launchable:
+            matches = launchable
+    raise ControlError(f"ambiguous app name {query!r} ({len(matches)} matches): {', '.join(matches[:5])}")
+
+
+def resolve_launcher(adb: Adb, serial: str, package: str) -> str:
+    output = shell(adb, serial, ["cmd", "package", "resolve-activity", "--brief",
+                               "-a", "android.intent.action.MAIN", "-c",
+                               "android.intent.category.LAUNCHER", "-p", package]).decode("utf-8", "replace")
+    for line in output.splitlines():
+        match = COMPONENT_RE.fullmatch(line.strip())
+        if match and match["package"] == package:
+            return match["component"]
+    raise LauncherNotFoundError(f"no launcher activity found for {package}")
 
 
 def parse_log_entries(text: str) -> list[dict]:
@@ -823,19 +865,60 @@ def inject_multi_touch(adb: Adb, serial: str, fingers: list[dict[str, int]], dur
     helper = Path(__file__).with_name("multitouch") / "multitouch.dex"
     if not helper.is_file():
         raise ControlError("multi-touch helper missing; run python3 scripts/multitouch/build.py")
-    remote = "/data/local/tmp/android-control-multitouch.dex"
-    adb.run(["push", str(helper), remote], serial=serial)
+    payload = helper.read_bytes()
+    version = hashlib.sha256(payload).hexdigest()[:16]
+    remote = f"/data/local/tmp/android-control-multitouch-{version}.dex"
+    # The filename changes with the content, so a rebuilt helper is never reused.
+    # A partial upload from a dropped connection must be retried too.
+    exists = shell(adb, serial, [f'[ -s {remote} ] && [ "$(wc -c < {remote})" -eq {len(payload)} ] '
+                                '&& echo present || true']).strip()
+    if exists != b"present":
+        adb.run(["push", str(helper), remote], serial=serial)
+    shell(adb, serial, ["rm", "-f", "/data/local/tmp/android-control-multitouch.dex"])
     coordinates = [str(finger[key]) for finger in fingers for key in ("x1", "y1", "x2", "y2")]
     shell(adb, serial, [f"CLASSPATH={remote}", "app_process", "/", "MultiTouch", str(duration), *coordinates])
+
+
+def logical_display_size(adb: Adb, serial: str) -> tuple[int, int]:
+    if __package__:
+        from .android_screen import parse_screen_state
+    else:
+        from android_screen import parse_screen_state
+    display = shell(adb, serial, ["dumpsys", "display"]).decode("utf-8", "replace")
+    state = parse_screen_state("", display, "")
+    width, height = state["width"], state["height"]
+    if not width or not height:
+        raise ControlError("cannot read logical display dimensions")
+    return width, height
+
+
+def validate_points(points: list[tuple[int, int]], screen: tuple[int, int]) -> None:
+    width, height = screen
+    if any(not (0 <= x < width and 0 <= y < height) for x, y in points):
+        raise ControlError(f"gesture coordinates exceed the {width}x{height} display")
 
 
 def device_action(args: argparse.Namespace, adb: Adb) -> object:
     """Validate and normalize arguments for direct callers as well as execute()."""
     prepare_action(args)
+    if args.action in {"list-targets", "connect", "disconnect", "pair"}:
+        raise ControlError(f"{args.action} is a host action; use execute() instead of device_action()")
     if args.action == "set-default-target":
         return set_default_target(adb, args.target)
     serial = resolve_serial(adb, args.target)
     action = args.action
+    if action in {"tap", "swipe", "long-press", "multi-touch", "zoom"}:
+        screen = logical_display_size(adb, serial)
+        if action in {"tap", "long-press"}:
+            points = [(args.x, args.y)]
+        elif action == "swipe":
+            points = [(args.x1, args.y1), (args.x2, args.y2)]
+        elif action == "multi-touch":
+            points = [(finger[x], finger[y]) for finger in args.fingers
+                      for x, y in (("x1", "y1"), ("x2", "y2"))]
+        else:
+            points = [(args.x, args.y)]
+        validate_points(points, screen)
     if action in {"get-dnd", "set-dnd"}:
         if __package__:
             from .android_dnd import get_dnd, set_dnd
@@ -888,6 +971,11 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
                         battery[key.lower()] = value
         except ControlError:
             pass
+        battery["status_label"] = {"1": "unknown", "2": "charging", "3": "discharging",
+                                   "4": "not-charging", "5": "full"}.get(battery.get("status"), "unknown")
+        battery["health_label"] = {"1": "unknown", "2": "good", "3": "overheat", "4": "dead",
+                                   "5": "over-voltage", "6": "unspecified-failure", "7": "cold"}.get(
+                                       battery.get("health"), "unknown")
         return {"target": serial, "state": adb.run(["get-state"], serial=serial).decode().strip(), "properties": props, "battery": battery}
     elif action == "list-packages":
         installed = packages(adb, serial, refresh=True)
@@ -920,7 +1008,6 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         inject_multi_touch(adb, serial, args.fingers, args.duration)
         return {"target": serial, "action": action, "fingers": args.fingers, "duration_ms": args.duration}
     elif action == "zoom":
-        _, screen = capture_screen(adb, serial)
         fingers = zoom_paths(args.direction, args.x, args.y, args.distance, *screen)
         inject_multi_touch(adb, serial, fingers, args.duration)
         return {"target": serial, "action": action, "direction": args.direction, "center": [args.x, args.y],
@@ -929,22 +1016,35 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         shell(adb, serial, ["input", "swipe", str(args.x), str(args.y), str(args.x), str(args.y), str(args.duration)])
         return {"target": serial, "action": action, "point": [args.x, args.y], "duration_ms": args.duration}
     elif action == "type-text":
-        shell(adb, serial, ["input", "text", shell_quote(args.text.replace(" ", "%s"))])
+        # Split before the 's' in a literal %s; Android's input command rewrites
+        # that sequence to a space and has no escaping syntax for it.
+        chunks = re.split(r"(?<=%)(?=s)", args.text)
+        commands = ["input text " + shell_quote(chunk.replace(" ", "%s")) for chunk in chunks]
+        shell(adb, serial, [" && ".join(commands)])
         return {"target": serial, "action": action, "characters": len(args.text)}
     elif action == "press-key":
         key = args.key
         shell(adb, serial, ["input", "keyevent", str(KEY_MAP[key])])
         return {"target": serial, "action": action, "key": key}
     elif action == "launch-app":
-        package = resolve_package(adb, serial, args.name)
+        package = resolve_package(adb, serial, args.name, prefer_launchable=True)
         if not PACKAGE_RE.fullmatch(package):
             raise ControlError("resolved package name is invalid")
+        component = resolve_launcher(adb, serial, package)
         if args.force_restart:
             shell(adb, serial, ["am", "force-stop", package])
-        shell(adb, serial, ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"])
+        # NEW_TASK | RESET_TASK_IF_NEEDED matches launcher task reuse behavior.
+        output = shell(adb, serial, ["am", "start", "-W", "-f", "0x10200000", "-a", "android.intent.action.MAIN",
+                                   "-c", "android.intent.category.LAUNCHER", "-n", component]).decode("utf-8", "replace")
+        if re.search(r"^\s*(?:Error[:\s]|Status:\s*timeout)", output, re.M | re.I):
+            raise ControlError(f"app launch failed: {output.strip()[:300]}")
+        try:
+            focus = parse_current_focus(shell(adb, serial, ["dumpsys", "window"]).decode("utf-8", "replace"))
+        except ControlError:
+            focus = None
         return {
             "target": serial, "action": action, "package": package,
-            "force_restarted": bool(args.force_restart),
+            "component": component, "focus": focus, "force_restarted": bool(args.force_restart),
         }
     elif action == "force-stop-app":
         package = resolve_package(adb, serial, args.name)
@@ -967,6 +1067,7 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
             raise ControlError("URL must be an absolute http:// or https:// URL")
         shell(adb, serial, ["am", "start", "-a", "android.intent.action.VIEW", "-d", shell_quote(args.url)])
         return {"target": serial, "action": action, "url": args.url}
+    raise ControlError(f"unsupported device action: {action}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1021,6 +1122,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def prepare_action(args: argparse.Namespace) -> None:
+    if args.action not in ACTION_FIELDS:
+        raise ControlError(f"unsupported action: {args.action}")
     if args.timeout <= 0:
         raise ControlError("--timeout must be positive")
     for field in ("x", "y", "x1", "y1", "x2", "y2"):
@@ -1029,7 +1132,11 @@ def prepare_action(args: argparse.Namespace) -> None:
             raise ControlError(f"--{field} must be non-negative")
     if args.duration is not None and args.duration < 0:
         raise ControlError("--duration must be non-negative")
+    if args.action == "long-press" and args.duration == 0:
+        raise ControlError("long-press duration must be positive")
     validate_action_args(args)
+    if args.action == "type-text" and any(not 32 <= ord(char) <= 126 for char in args.text):
+        raise ControlError("type-text supports printable ASCII only; use press-key for Enter/Tab and an IME for non-ASCII text")
     if args.action == "set-screen" and args.state not in {"awake", "asleep"}:
         raise ControlError("set-screen state must be awake or asleep")
     if args.action == "set-volume":

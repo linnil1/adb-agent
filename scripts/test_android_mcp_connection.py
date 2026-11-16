@@ -51,9 +51,13 @@ elif args[:2] == ['-s', 'phone.local:5555']:
         sys.exit('injected input failure')
     if args == ['get-state']: print('device')
     elif args[:2] == ['shell', 'getprop']: print('fixture')
-    elif args == ['shell', 'dumpsys', 'battery']: print('level: 80')
+    elif args == ['shell', 'dumpsys', 'battery']: print('level: 80\nstatus: 5\nhealth: 2')
+    elif args == ['shell', 'dumpsys', 'display']:
+        print('mDisplayId=0\nmOverrideDisplayInfo=DisplayInfo{real 1080 x 1920, rotation 0, state ON}')
     elif args == ['shell', 'pm', 'list', 'packages']: print('package:com.example.app')
     elif args == ['shell', 'ps', '-A', '-o', 'PID,NAME']: print('123 com.example.app')
+    elif args[:4] == ['shell', 'cmd', 'package', 'resolve-activity']:
+        print('com.example.app/.MainActivity')
     elif args == ['shell', 'dumpsys', 'window']:
         print('mCurrentFocus=Window{123 u0 com.example.app/.MainActivity}')
     elif args[0] == 'logcat': sys.stdout.write((root / 'logcat.txt').read_text())
@@ -73,8 +77,11 @@ elif args[:2] == ['-s', 'phone.local:5555']:
             sys.stdout.buffer.write(b'stopped\n' + (root / 'recording.mp4').read_bytes())
         else: print('none')
     elif args[:2] == ['shell', 'input'] or args[0] == 'push': pass
+    elif args[0] == 'shell' and args[1].startswith('[ -s '): pass
+    elif args == ['shell', 'rm', '-f', '/data/local/tmp/android-control-multitouch.dex']: pass
+    elif args[0] == 'shell' and args[1].startswith('input text '): pass
     elif args[0] == 'shell' and args[1].startswith('CLASSPATH='): pass
-    elif args[:3] in (['shell', 'am', 'force-stop'], ['shell', 'monkey', '-p'], ['shell', 'am', 'start']): pass
+    elif args[:3] in (['shell', 'am', 'force-stop'], ['shell', 'am', 'start']): pass
     else: sys.exit('unhandled fixture command: ' + repr(args))
 else: sys.exit('unhandled fixture command: ' + repr(args))
 '''
@@ -275,6 +282,9 @@ class MCPConnectionTests(unittest.TestCase):
                 self.assertEqual(self.result(name, arguments)[field], expected)
         commands = [json.loads(line) for line in (self.root / 'commands.jsonl').read_text().splitlines()]
         self.assertIn(['-s', 'phone.local:5555', 'shell', 'input', 'tap', '25', '40'], commands)
+        self.assertFalse(any('monkey' in command for command in commands))
+        self.assertEqual(self.result('status')['battery']['status_label'], 'full')
+        self.assertEqual(self.result('status')['battery']['health_label'], 'good')
 
         output = self.root / 'client.log'
         forwarded = subprocess.run(

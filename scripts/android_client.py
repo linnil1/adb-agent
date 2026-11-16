@@ -147,7 +147,10 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         output = Path(args.output).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(png)
-        return {"target": target, "path": str(output), "bytes": len(png)}
+        result = {"target": target, "path": str(output), "bytes": len(png)}
+        if "region" in viewer:
+            result["region"] = viewer["region"]
+        return result
     result = body.get("result")
     if not isinstance(result, dict):
         raise ControlError("local MCP server omitted the tool result")

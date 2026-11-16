@@ -20,6 +20,7 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `status` | Report device state, model, Android version, and battery information. |
 | `screen-status` | Read default-display power, interactive state, and logical size. |
 | `set-screen` | Set `--state awake\|asleep` with explicit wake/sleep keys and verify interactivity. |
+| `rotate-screen` | Lock rotation to `0`, `90`, `180`, `270`, or enable `auto`. |
 | `get-dnd` | Read Do Not Disturb, raw Zen mode, ringer modes, and command support. |
 | `set-dnd` | Set `--dnd-mode off\|priority\|alarms\|none` and verify the observed mode. |
 | `get-volume` | Read full audio status; optionally filter streams with `--stream`. |
@@ -28,14 +29,15 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `current-focus` | Report the activity currently holding window focus. |
 | `screenshot` | Capture the display, or one `x1,y1,x2,y2` region, to a validated PNG file. |
 | `describe-screen` | Return parsed accessibility elements (including resource IDs) or the original UI XML. |
+| `wait-for-ui` | Wait for exact accessibility selectors to become present, gone, or enabled. |
 | `tap` | Tap one screen coordinate. |
 | `swipe` | Swipe between two coordinates. |
 | `multi-touch` | Move 2-10 fingers together for pinch/zoom or multi-finger swipes. |
 | `zoom` | Zoom `--direction in\|out` around `--x --y`; `--distance` is each finger's travel in pixels (default 150). |
 | `long-press` | Hold one screen coordinate. |
-| `type-text` | Enter text through Android input. |
+| `type-text` | Enter printable ASCII text, preserving literal `%s`; use `press-key` for Enter/Tab. |
 | `press-key` | Send navigation (including `--key home` and `--key back`), editing, volume, or media playback keys. |
-| `launch-app` | Launch an installed package, optionally forcing a restart. |
+| `launch-app` | Resolve and start the launcher activity, wait for startup, and return observed focus; optionally force a restart. |
 | `force-stop-app` | Force-stop an installed package. |
 | `open-url` | Open an HTTP or HTTPS URL on the device. |
 | `start-screen-record` | Start a background screen recording with a required time limit (1-180 seconds). |
@@ -63,6 +65,32 @@ python3 scripts/android_control.py --action pair --address phone.local:37000
 Interactive CLI pairing prompts for the code without echo; automation and MCP supply `pair_code` (CLI `--pair-code`). The code is sent to ADB via stdin, omitted from tool history/results, and masked in dashboard forms. Pairing doesn't imply a ready connection; call `connect` afterward. These actions preserve the remembered default target.
 
 Screen state and power controls are available as `screen_status` and `set_screen` with `state="awake"` or `state="asleep"`.
+
+App launches use `am start -W`, preserving the user's rotation setting. The result
+includes the launcher `component` and observed `focus` (or null if unavailable).
+Focus includes its source: `mCurrentFocus` is the current window, while
+`mFocusedApp` can be stale. Package matching prefers a full package name, then an
+exact final segment, then a substring. When several strongest matches remain,
+`launch-app` prefers a unique launchable package; several launchable matches
+remain ambiguous. Localized app labels are not searched.
+
+Gestures validate coordinates against the default display's logical dimensions,
+including rotation and overrides. Zoom reads dimensions without taking a
+screenshot. Long presses require a positive duration. Multi-touch caches a
+versioned helper in `/data/local/tmp`; a changed helper gets a new cache filename.
+Once that helper is available, multi-touch removes the old unversioned
+`android-control-multitouch.dex` left by earlier versions.
+
+Ringer mode is global. `--stream` selects only volume/mute operations, including
+when they are combined with a ringer change. `get-volume`'s `supported_commands`
+contains native Android subcommand names: audio uses names such as `set-volume`,
+and notification uses `set_dnd`. Battery `status` and `health` retain Android's
+raw codes, with readable `status_label` and `health_label` alongside them.
+
+Python callers can use `execute(action_args(...))` for every action. Callers with
+an existing `Adb` instance can use `device_action(args, adb)` for device actions;
+it applies the same defaults and validation. Host actions (`list-targets`,
+`connect`, `disconnect`, `pair`) require `execute()`.
 
 ## Streamable HTTP MCP
 

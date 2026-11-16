@@ -10,7 +10,7 @@ import tempfile
 import time
 import unittest
 import zlib
-from contextlib import redirect_stderr
+from contextlib import chdir, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +20,7 @@ from scripts.test_support import python_command
 
 
 MODULE_PATH = Path(__file__).with_name("android_control.py")
+DISPLAY = b'mDisplayId=0\nmOverrideDisplayInfo=DisplayInfo{real 1080 x 1920, rotation 0, state ON}\n'
 
 
 class AndroidControlTests(unittest.TestCase):
@@ -61,28 +62,73 @@ class AndroidControlTests(unittest.TestCase):
             {"x1": 300, "y1": 200, "x2": 350, "y2": 200},
         ]
         args = android.action_args("multi-touch", fingers=fingers, target="device-a")
-        android.prepare_action(args)
-        self.assertEqual(args.duration, 300)
-        self.assertEqual(args.fingers, fingers)
         adb = self.fake_adb(("device-a", "device"))
         commands = []
+        cached = set()
+        legacy_present = True
+        fail_push = False
         original = adb.run
 
         def run(command, **kwargs):
+            nonlocal legacy_present
             if command == ["devices", "-l"]:
                 return original(command, **kwargs)
             commands.append((command, kwargs))
+            if command == ["shell", "dumpsys", "display"]:
+                return DISPLAY
+            if command[0] == "shell" and command[1].startswith("[ -s "):
+                return b"present" if command[1].split()[2] in cached else b""
+            if command[0] == "push":
+                if fail_push:
+                    raise android.ControlError("upload failed")
+                cached.add(command[2])
+            if command == ["shell", "rm", "-f", "/data/local/tmp/android-control-multitouch.dex"]:
+                self.assertTrue(cached)
+                legacy_present = False
             return b""
         adb.run = run
         result = android.device_action(args, adb)
+        self.assertEqual(args.duration, 300)
+        self.assertEqual(args.fingers, fingers)
         self.assertEqual(result["fingers"], fingers)
-        self.assertEqual(commands[0][0][0], "push")
-        self.assertEqual(commands[1][0], [
-            "shell", "CLASSPATH=/data/local/tmp/android-control-multitouch.dex",
+        pushes = [command for command, _ in commands if command[0] == "push"]
+        self.assertEqual(len(pushes), 1)
+        remote = pushes[0][2]
+        cleanup = ["shell", "rm", "-f", "/data/local/tmp/android-control-multitouch.dex"]
+        self.assertGreater([command for command, _ in commands].index(cleanup),
+                           [command for command, _ in commands].index(pushes[0]))
+        self.assertFalse(legacy_present)
+        self.assertEqual(commands[-1][0], [
+            "shell", f"CLASSPATH={remote}",
             "app_process", "/", "MultiTouch", "300",
             "100", "200", "50", "200", "300", "200", "350", "200",
         ])
         self.assertTrue(all(kwargs["serial"] == "device-a" for _, kwargs in commands))
+        legacy_present = True
+        android.device_action(args, adb)
+        self.assertFalse(legacy_present)
+        self.assertEqual(sum(command[0] == "push" for command, _ in commands), 1)
+        helper_root = Path(self.temporary_directory.name)
+        (helper_root / "multitouch").mkdir()
+        (helper_root / "multitouch" / "multitouch.dex").write_bytes(b"rebuilt helper")
+        with patch("scripts.android_core.__file__", str(helper_root / "android_core.py")):
+            android.device_action(args, adb)
+        self.assertEqual(len(cached), 2)
+        args.fingers[0]["x1"] = 5000
+        with self.assertRaisesRegex(android.ControlError, "exceed.*display"):
+            android.device_action(args, adb)
+        self.assertEqual(sum(command[0] == "push" for command, _ in commands), 2)
+        # Preserve the legacy helper when the replacement could not be uploaded.
+        args.fingers[0]["x1"] = 100
+        (helper_root / "multitouch" / "multitouch.dex").write_bytes(b"another rebuild")
+        fail_push = True
+        legacy_present = True
+        before = len(commands)
+        with patch("scripts.android_core.__file__", str(helper_root / "android_core.py")), \
+             self.assertRaisesRegex(android.ControlError, "upload failed"):
+            android.device_action(args, adb)
+        self.assertTrue(legacy_present)
+        self.assertNotIn(cleanup, [command for command, _ in commands[before:]])
 
     def test_multi_touch_rejects_invalid_paths(self):
         valid = {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
@@ -122,27 +168,30 @@ class AndroidControlTests(unittest.TestCase):
                 args = android.action_args("zoom", **({"x": 500, "y": 900, "direction": "in"} | values))
                 android.prepare_action(args)
         args = android.action_args("zoom", direction="in", x=500, y=900, target="device-a")
-        android.prepare_action(args)
         adb = self.fake_adb(("device-a", "device"))
-        with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
+        with patch("scripts.android_core.logical_display_size", return_value=(1080, 1920)), \
              patch("scripts.android_core.inject_multi_touch") as inject:
             result = android.device_action(args, adb)
             inject.assert_called_once_with(adb, "device-a", result["fingers"], 500)
             self.assertEqual(result["action"], "zoom")
             self.assertEqual(result["direction"], "in")
         args.direction = "out"
-        with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
+        with patch("scripts.android_core.logical_display_size", return_value=(1080, 1920)), \
              patch("scripts.android_core.inject_multi_touch") as inject:
             result = android.device_action(args, adb)
             self.assertEqual(result["direction"], "out")
             self.assertEqual(result["fingers"], android.zoom_paths("out", 500, 900, 150, 1080, 1920))
             inject.assert_called_once_with(adb, "device-a", result["fingers"], 500)
         args.x = 50
-        with patch("scripts.android_core.capture_screen", return_value=(b"", [1080, 1920])), \
+        with patch("scripts.android_core.logical_display_size", return_value=(1080, 1920)), \
              patch("scripts.android_core.inject_multi_touch") as inject:
             with self.assertRaises(android.ControlError):
                 android.device_action(args, adb)
             inject.assert_not_called()
+        # Logical geometry follows an override/rotation, without calling screencap.
+        with patch.object(adb, "run", return_value=DISPLAY.replace(b"1080 x 1920", b"1920 x 1080")) as run:
+            self.assertEqual(android.logical_display_size(adb, "device-a"), (1920, 1080))
+            self.assertEqual(run.call_args.args[0], ["shell", "dumpsys", "display"])
 
     def test_zoom_forwarding_and_direction_validation(self):
         for direction in ("in", "out"):
@@ -241,6 +290,11 @@ class AndroidControlTests(unittest.TestCase):
         elements = android.parse_ui_xml(xml)
         self.assertEqual(elements[0]["label"], "A & B > C")
         self.assertEqual(elements[0]["center"], [50, 30])
+        quoted = '''<hierarchy><node text='say "hi" >x' content-desc="it's &amp; fine"
+                    bounds='[0,0][100,40]'/></hierarchy>'''
+        elements = android.parse_ui_xml(quoted)
+        self.assertEqual(elements[0]["text"], 'say "hi" >x')
+        self.assertEqual(elements[0]["description"], "it's & fine")
 
     def test_parse_ui_xml_preserves_accessibility_state(self):
         xml = (
@@ -405,9 +459,17 @@ class AndroidControlTests(unittest.TestCase):
         self.assertEqual(calls[-1][0], [
             "shell", "am", "force-stop", "com.example.transit",
         ])
+        android._package_cache["device-1"] = (time.monotonic(), [
+            "com.vendor.transit.overlay", "com.example.transit", "com.vendor.transit.extra",
+        ])
+        self.assertEqual(android.resolve_package(FakeAdb(), "device-1", "Transit"), "com.example.transit")
+        with self.assertRaisesRegex(android.ControlError, "3 matches"):
+            android.resolve_package(FakeAdb(), "device-1", "tra")
 
     def test_launch_force_restart_stops_then_launches(self):
         calls = []
+        launcher = b"com.example.transit/.MainActivity\n"
+        start_output = b"Status: ok\n"
 
         class FakeAdb:
             def run(self, args, **kwargs):
@@ -416,9 +478,14 @@ class AndroidControlTests(unittest.TestCase):
                     return b"List of devices attached\ndevice-1 device\n"
                 if args == ["shell", "pm", "list", "packages"]:
                     return b"package:com.example.transit\n"
+                if args[:4] == ["shell", "cmd", "package", "resolve-activity"]:
+                    return launcher
+                if args[:3] == ["shell", "am", "start"]:
+                    return start_output
+                if args == ["shell", "dumpsys", "window"]:
+                    return b"mCurrentFocus=Window{123 u0 com.example.transit/.MainActivity}"
                 if args in (
                     ["shell", "am", "force-stop", "com.example.transit"],
-                    ["shell", "monkey", "-p", "com.example.transit", "-c", "android.intent.category.LAUNCHER", "1"],
                 ):
                     return b""
                 raise AssertionError(args)
@@ -428,10 +495,56 @@ class AndroidControlTests(unittest.TestCase):
         )
         result = android.device_action(args, FakeAdb())
         self.assertTrue(result["force_restarted"])
-        self.assertEqual([call[0] for call in calls[-2:]], [
+        self.assertEqual(result["focus"]["package"], "com.example.transit")
+        self.assertEqual([call[0] for call in calls[-3:-1]], [
             ["shell", "am", "force-stop", "com.example.transit"],
-            ["shell", "monkey", "-p", "com.example.transit", "-c", "android.intent.category.LAUNCHER", "1"],
+            ["shell", "am", "start", "-W", "-f", "0x10200000", "-a", "android.intent.action.MAIN", "-c",
+             "android.intent.category.LAUNCHER", "-n", "com.example.transit/.MainActivity"],
         ])
+        # Missing launchers must fail before force-stop, and never use monkey.
+        calls.clear()
+        launcher = b"No activity found\n"
+        with self.assertRaisesRegex(android.ControlError, "no launcher activity"):
+            android.device_action(args, FakeAdb())
+        self.assertFalse(any(command[:3] == ["shell", "am", "force-stop"] for command, _ in calls))
+        launcher = b"com.example.transit/.MainActivity\n"
+        start_output = b"Error: Activity class does not exist\n"
+        with self.assertRaisesRegex(android.ControlError, "app launch failed"):
+            android.device_action(args, FakeAdb())
+        # Prefer the one launchable app when several strongest names match.
+        candidates = ["com.android.providers.settings", "com.android.settings", "com.vendor.settings.overlay"]
+        android._package_cache["device-1"] = (time.monotonic(), candidates)
+        launchable = {"com.android.settings"}
+        def launcher_run(command, **kwargs):
+            calls.append((command, kwargs))
+            if command[:4] == ["shell", "cmd", "package", "resolve-activity"]:
+                package = command[-1]
+                return f"{package}/.MainActivity\n".encode() if package in launchable else b"No activity found\n"
+            if command[:3] == ["shell", "am", "start"]:
+                return b"Status: ok\n"
+            if command == ["shell", "dumpsys", "window"]:
+                return b"mCurrentFocus=Window{123 u0 com.android.settings/.MainActivity}"
+            raise AssertionError(command)
+        adb = FakeAdb()
+        with patch.object(adb, "run", side_effect=launcher_run):
+            result = android.device_action(android.action_args("launch-app", name="Settings", target="device-1"), adb)
+            self.assertEqual(result["package"], "com.android.settings")
+            with self.assertRaisesRegex(android.ControlError, "2 matches"):
+                android.resolve_package(adb, "device-1", "settings")
+            launchable.add("com.android.providers.settings")
+            calls.clear()
+            with self.assertRaisesRegex(android.ControlError, "2 matches"):
+                android.device_action(android.action_args("launch-app", name="settings", target="device-1"), adb)
+            self.assertTrue(all(command[:4] == ["shell", "cmd", "package", "resolve-activity"] for command, _ in calls))
+            launchable.clear()
+            # A full package is always selected directly, regardless of launchability.
+            calls.clear()
+            self.assertEqual(android.resolve_package(adb, "device-1", "com.android.settings", prefer_launchable=True),
+                             "com.android.settings")
+            self.assertEqual(calls, [])
+        with patch.object(adb, "run", side_effect=android.ControlError("device offline")):
+            with self.assertRaisesRegex(android.ControlError, "device offline"):
+                android.resolve_package(adb, "device-1", "settings", prefer_launchable=True)
 
     def test_mcp_is_an_alternative_mode(self):
         args = android.build_parser().parse_args(["--mcp", "--port", "9000"])
@@ -513,7 +626,8 @@ class AndroidControlTests(unittest.TestCase):
             android.urlrequest, "urlopen",
             side_effect=[call, io.BytesIO(android.PNG_MAGIC + b"crop")],
         ) as urlopen:
-            android.execute_via_server(args, "http://127.0.0.1:8000")
+            result = android.execute_via_server(args, "http://127.0.0.1:8000")
+        self.assertEqual(result["region"], [1, 2, 3, 4])
         sent = json.loads(urlopen.call_args_list[0].args[0].data)
         self.assertEqual(sent, {
             "name": "screenshot", "arguments": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},
@@ -558,6 +672,7 @@ class AndroidControlTests(unittest.TestCase):
 
         self.assertEqual(result["region"], [1, 1, 3, 3])
         self.assertIn("head -c $((2 * w * 4)) | gzip -1", calls[-1][1])
+        self.assertIn("[ 3 -le $w ] && [ 3 -le $h ]", calls[-1][1])
         crop_width, crop_height, crop_rows = self.decode_png(output.read_bytes())
         self.assertEqual((crop_width, crop_height), (2, 2))
         self.assertEqual(crop_rows, [row[4:12] for row in rows[1:3]])
@@ -631,6 +746,102 @@ class AndroidControlTests(unittest.TestCase):
             android.prepare_action(android.action_args("start-screen-record", time_limit=181))
         with self.assertRaisesRegex(android.ControlError, "not valid for status"):
             android.prepare_action(android.action_args("status", time_limit=5))
+
+    def test_direct_api_defaults_and_validation_before_adb(self):
+        calls = []
+        png = android.encode_png(1, 1, [bytes([10, 20, 30, 255])])
+        video = self.fake_mp4()
+        class FakeAdb:
+            timeout = 30
+            def run(self, args, **kwargs):
+                calls.append(args)
+                if args == ["exec-out", "screencap", "-p"]:
+                    return png
+                if args[0] == "exec-out" and "kill -INT" in args[1]:
+                    return b"stopped\n" + video
+                raise AssertionError(args)
+        with chdir(self.temporary_directory.name):
+            for action, filename, data in (
+                ("screenshot", "android-screen.png", png),
+                ("stop-screen-record", "android-screen.mp4", video),
+            ):
+                with self.subTest(default_output=action):
+                    result = android.device_action(android.action_args(action, target="phone"), FakeAdb())
+                    self.assertEqual(Path(filename).read_bytes(), data)
+                    self.assertEqual(result["path"], str(Path(filename).resolve()))
+        calls.clear()
+        for action, values in (
+            ("launch-app", {}), ("force-stop-app", {}), ("start-screen-record", {}),
+            ("start-screen-record", {"time_limit": 181}),
+            ("wait-for-ui", {"text": "Ready", "state": "awake"}),
+            ("tap", {"x": 1, "y": 2, "duration": 10}),
+            ("tap", {"x": -1, "y": 2}),
+            ("long-press", {"x": 1, "y": 2, "duration": 0}),
+        ):
+            with self.subTest(invalid_action=action, values=values), self.assertRaises(android.ControlError):
+                android.device_action(android.action_args(action, **values), FakeAdb())
+        for action in ("list-targets", "connect", "disconnect", "pair"):
+            values = {} if action == "list-targets" else {"address": "phone.local:5555"}
+            if action == "pair":
+                values["pair_code"] = "654321"
+            with self.subTest(host_action=action), self.assertRaisesRegex(android.ControlError, "host action; use execute"):
+                android.device_action(android.action_args(action, **values), FakeAdb())
+        args = android.action_args("status")
+        args.action = "unsupported"
+        with self.assertRaisesRegex(android.ControlError, "unsupported action"):
+            android.device_action(args, FakeAdb())
+        self.assertEqual(calls, [])
+
+    def test_input_bounds_and_literal_text(self):
+        root = Path(self.temporary_directory.name)
+        typed = root / "typed.txt"
+        injector = root / "input"
+        injector.write_text(
+            f"#!{sys.executable}\nimport os, sys\n"
+            "with open(os.environ['TEST_TYPED_OUTPUT'], 'a') as output:\n"
+            "    output.write(sys.argv[2].replace('%s', ' '))\n"
+        )
+        injector.chmod(0o755)
+        commands = []
+        class FakeAdb:
+            def run(self, args, **kwargs):
+                commands.append(args)
+                if args == ["shell", "dumpsys", "display"]:
+                    return DISPLAY
+                if args[:2] == ["shell", "input"]:
+                    return b""
+                if args[0] == "shell" and args[1].startswith("input text "):
+                    result = subprocess.run(["/bin/sh", "-c", args[1]], check=True,
+                                            env=dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                                                     TEST_TYPED_OUTPUT=str(typed)),
+                                            capture_output=True, timeout=5)
+                    return result.stdout
+                raise AssertionError(args)
+        for action, values in (
+            ("tap", {"x": 1080, "y": 1}),
+            ("long-press", {"x": 1, "y": 1920}),
+            ("swipe", {"x1": 1, "y1": 1, "x2": 5000, "y2": 1}),
+        ):
+            with self.subTest(outside=action), self.assertRaisesRegex(android.ControlError, "exceed.*display"):
+                android.device_action(android.action_args(action, target="phone", **values), FakeAdb())
+        self.assertTrue(all(command == ["shell", "dumpsys", "display"] for command in commands))
+        for action, values, duration in (
+            ("long-press", {"x": 1, "y": 2}, 1000),
+            ("swipe", {"x1": 1, "y1": 2, "x2": 3, "y2": 4}, 300),
+        ):
+            result = android.device_action(android.action_args(action, target="phone", **values), FakeAdb())
+            self.assertEqual(result["duration_ms"], duration)
+        for text in ("100%sure", "%s%s", "100% safe", "a %s b", "it's $HOME; & | <> `uname`", ""):
+            with self.subTest(text=text):
+                typed.write_text("")
+                result = android.device_action(android.action_args("type-text", text=text, target="phone"), FakeAdb())
+                self.assertEqual(typed.read_text(), text)
+                self.assertEqual(result["characters"], len(text))
+        commands.clear()
+        for text in ("中文", "hello\nworld", "\t"):
+            with self.subTest(unsupported=text), self.assertRaisesRegex(android.ControlError, "printable ASCII"):
+                android.device_action(android.action_args("type-text", text=text, target="phone"), FakeAdb())
+        self.assertEqual(commands, [])
 
     def test_execute_via_server_downloads_recording(self):
         server = "http://127.0.0.1:8000"

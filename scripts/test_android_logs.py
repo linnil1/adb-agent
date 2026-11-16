@@ -115,7 +115,6 @@ class AndroidLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             args = core.action_args("logs", name="com.example.app", match="$(literal)",
                                     output=str(Path(directory) / "log.txt"), target="phone")
-            core.prepare_action(args)
             result = core.device_action(args, adb)
             self.assertEqual(result["pids"], [123, 124])
             self.assertEqual((result["action"], result["kind"]), ("logs", "standard"))
@@ -129,7 +128,6 @@ class AndroidLogTests(unittest.TestCase):
 
     def test_exited_app_logs_error_but_crash_capture_works(self):
         args = core.action_args("logs", name="com.example.app", target="phone")
-        core.prepare_action(args)
         with self.assertRaisesRegex(core.ControlError, "use logs --kind crash"):
             core.device_action(args, FakeAdb(processes=""))
         args.kind = "crash"

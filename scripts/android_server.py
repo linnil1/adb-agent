@@ -186,7 +186,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.tool(name="status")
     def status_tool(target: str | None = None) -> dict[str, object]:
-        """Return device state, identity, Android version, and battery details."""
+        """Return device state, identity, Android version, and battery details with raw status/health codes and readable labels."""
         return call("status", target=target)  # type: ignore[return-value]
 
     @server.tool(name="screen_status")
@@ -221,7 +221,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         ringer_mode: Literal["normal", "vibrate", "silent"] | None = None,
         target: str | None = None,
     ) -> dict[str, object]:
-        """Set level, mute, raise/lower direction, or global ringer mode and verify readback. Stream defaults to media; ringer-only requests leave media untouched. Require at least one change; level and direction cannot be combined. Apply ringer first, then level/direction, then explicit mute. Return full status plus requested/verified; global ringer changes include all streams. Requests are sequential, not atomic; failures identify verified steps without rollback. Use set_dnd for Do Not Disturb."""
+        """Set level, mute, raise/lower direction, or global ringer mode and verify readback. Stream defaults to media and applies only to volume/mute operations; ringer-only requests leave media untouched. Require at least one change; level and direction cannot be combined. Apply ringer first, then level/direction, then explicit mute. Return full status plus requested/verified; global ringer changes include all streams. Requests are sequential, not atomic; failures identify verified steps without rollback. Use set_dnd for Do Not Disturb."""
         return call("set-volume", stream=stream, level=level, muted=muted,
                     direction=direction, ringer_mode=ringer_mode, target=target)
 
@@ -292,7 +292,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.tool(name="tap")
     def tap_tool(x: int, y: int, target: str | None = None) -> dict[str, object]:
-        """Tap non-negative device-pixel coordinates."""
+        """Tap device-pixel coordinates inside the current logical display."""
         result = call("tap", x=x, y=y, target=target)
         publish("gesture", gesture="tap", target=result["target"], x=x, y=y)  # type: ignore[index]
         return result  # type: ignore[return-value]
@@ -314,7 +314,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def multi_touch_tool(
         fingers: list[dict[str, int]], duration: int = 300, target: str | None = None,
     ) -> dict[str, object]:
-        """Move 2-10 fingers simultaneously. Each path has x1,y1,x2,y2 device pixels; duration is 1-3000 ms. Supports pinch, zoom, and multi-finger swipes."""
+        """Move 2-10 fingers simultaneously within the logical display. Each path has x1,y1,x2,y2 device pixels; duration is 1-3000 ms. Reuses a versioned helper cached on-device."""
         result = call("multi-touch", fingers=fingers, duration=duration, target=target)
         publish("gesture", gesture="multi_touch", target=result["target"], fingers=fingers, duration=duration)
         return result
@@ -333,7 +333,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
     def long_press_tool(
         x: int, y: int, duration: int = 1000, target: str | None = None,
     ) -> dict[str, object]:
-        """Long-press device-pixel coordinates."""
+        """Long-press coordinates inside the logical display for a positive duration in milliseconds."""
         result = call("long-press", x=x, y=y, duration=duration, target=target)
         publish(
             "gesture", gesture="long_press", target=result["target"],  # type: ignore[index]
@@ -343,7 +343,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.tool(name="type_text")
     def type_text_tool(text: str, target: str | None = None) -> dict[str, object]:
-        """Type text into the focused Android input."""
+        """Type printable ASCII into the focused input, preserving literal %s. Use press_key for Enter/Tab; non-ASCII needs an IME."""
         return call("type-text", text=text, target=target)  # type: ignore[return-value]
 
     @server.tool(name="press_key")
@@ -365,7 +365,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         force_restart: bool = False,
         target: str | None = None,
     ) -> dict[str, object]:
-        """Launch an installed app, optionally force-stopping it first."""
+        """Resolve and launch an app's launcher activity with am start -W, preserving rotation settings. Prefer a unique launchable package among equally strong name matches. Return component and observed focus (nullable). Optionally force-stop first."""
         return call(
             "launch-app", name=name, force_restart=force_restart, target=target,
         )  # type: ignore[return-value]
