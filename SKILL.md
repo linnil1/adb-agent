@@ -27,12 +27,14 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `pair` | `--address HOST:PAIRING_PORT` | `--pair-code CODE` (six digits; interactive CLI prompts if omitted) |
 | `screen-status` | none | none |
 | `set-screen` | `--state awake\|asleep` | none |
+| `rotate-screen` | `--rotation 0\|90\|180\|270\|auto` | none |
 | `get-dnd` | none | none |
 | `set-dnd` | `--dnd-mode off\|priority\|alarms\|none` | none |
 | `get-volume` | none | `--stream media\|ring\|notification\|alarm\|voice-call` |
 | `set-volume` | At least one of `--level INT`, `--muted true\|false`, `--direction raise\|lower`, `--ringer-mode normal\|vibrate\|silent` | `--stream STREAM` (default media); level and direction are mutually exclusive |
 | `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
+| `wait-for-ui` | At least one exact, nonempty `--text TEXT`, `--description TEXT`, `--resource-id ID` | `--state present\|gone\|enabled` (default present); `--wait-timeout SECONDS` (default 30, greater than 0 and at most 300) |
 | `tap` | `--x INT --y INT` | none |
 | `swipe` | `--x1 INT --y1 INT --x2 INT --y2 INT` | `--duration INT` (default 300) |
 | `multi-touch` | `--fingers JSON` | `--duration INT` (default 300, range 1-3000) |
@@ -67,6 +69,7 @@ python3 scripts/android_control.py --action press-key --target TARGET --key ente
 
 - Connections use `--address HOST:PORT` or `[IPv6]:PORT`, without `--target` or an existing device connection. Addresses, including `localhost`, resolve on the ADB server host. Pairing and connection ports can differ; MCP requires `pair_code`, while interactive CLI can prompt without echo.
 - Use accessibility element centers for taps and bounds for screenshot regions; `x2,y2` are exclusive. Regions require Android toybox's `od`, `tail`, `head`, and `gzip`. Accessibility can omit WebView/canvas/video content; use screenshots when needed. Waking may leave the phone locked.
+- `wait-for-ui` combines selectors with AND and returns matching accessibility elements without tapping. Rotation angles are relative to the device's natural orientation; apps may constrain the observed orientation.
 - `get-volume` retains global audio status when filtering streams. Read native index ranges before setting a level. Muted streams can report effective zero below the settable minimum; unmuting restores the remembered level. Ringer-only changes leave media untouched. Stream changes return that stream; ringer changes return all five.
 - DND modes: `off` disables DND, `priority` follows the existing policy, `alarms` allows alarms only, and `none` blocks interruptions. MCP's setter argument is `mode`, matching CLI `--dnd-mode`. Android may link DND, ringer, and stream mute states.
 - Sound setters return observed status with `requested` and `verified`. Combined volume requests apply ringer, level/direction, then mute, without rollback. On verification failure, inspect state before retrying; earlier steps may have applied. Volume/media keys confirm dispatch only, so prefer volume tools for verified changes.
