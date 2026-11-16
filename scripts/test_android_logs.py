@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,13 +43,20 @@ class AndroidLogTests(unittest.TestCase):
         return core.filter_log_text(text, **(values | kwargs))
 
     def test_defaults_and_argument_validation(self):
-        for action in ("logs", "crash-logs"):
-            args = core.action_args(action)
+        for kind in (None, "standard", "crash"):
+            args = core.action_args("logs", kind=kind)
             core.prepare_action(args)
-            self.assertEqual((args.lines, args.priority), (200, "V"))
+            self.assertEqual((args.kind, args.lines, args.priority), (kind or "standard", 200, "V"))
             for lines in (0, 5001, -1):
                 with self.assertRaises(core.ControlError):
-                    core.prepare_action(core.action_args(action, lines=lines))
+                    core.prepare_action(core.action_args("logs", kind=kind, lines=lines))
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            core.build_parser().parse_args(["--action", "logs", "--kind", "unknown"])
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            core.build_parser().parse_args(["--action", "crash-logs"])
+        for action in ("status", "clear-logs"):
+            with self.assertRaises(core.ControlError):
+                core.prepare_action(core.action_args(action, kind="crash"))
         with self.assertRaises(core.ControlError):
             core.prepare_action(core.action_args("clear-logs", name="com.example.app"))
         with self.assertRaises(core.ControlError):
@@ -110,6 +118,8 @@ class AndroidLogTests(unittest.TestCase):
             core.prepare_action(args)
             result = core.device_action(args, adb)
             self.assertEqual(result["pids"], [123, 124])
+            self.assertEqual((result["action"], result["kind"]), ("logs", "standard"))
+            self.assertEqual(result["buffers"], ["main", "system", "crash"])
             self.assertEqual(result["line_count"], 1)
             self.assertEqual(Path(result["path"]).read_text(), result["text"])
             command = adb.commands[-1]
@@ -120,31 +130,41 @@ class AndroidLogTests(unittest.TestCase):
     def test_exited_app_logs_error_but_crash_capture_works(self):
         args = core.action_args("logs", name="com.example.app", target="phone")
         core.prepare_action(args)
-        with self.assertRaisesRegex(core.ControlError, "not running"):
+        with self.assertRaisesRegex(core.ControlError, "use logs --kind crash"):
             core.device_action(args, FakeAdb(processes=""))
-        args.action = "crash-logs"
+        args.kind = "crash"
         adb = FakeAdb(entry(1, "FATAL EXCEPTION: main") +
                       entry(1, "Process: com.example.app, PID: 1"), processes="")
         result = core.device_action(args, adb)
         self.assertEqual(result["line_count"], 2)
+        self.assertEqual((result["action"], result["kind"]), ("logs", "crash"))
+        self.assertEqual(result["buffers"], ["crash"])
         self.assertNotIn("--pid=1", adb.commands[-1])
         self.assertNotIn(["shell", "ps", "-A", "-o", "PID,NAME"], adb.commands)
 
     def test_single_pid_filter_and_scan_truncation_metadata(self):
-        adb = FakeAdb(entry(123, "retained"), processes="123 com.example.app\n")
-        original = adb.run_tail
+        for kind in ("standard", "crash"):
+            adb = FakeAdb(entry(123, "FATAL EXCEPTION: main") +
+                          entry(123, "Process: com.example.app, PID: 123"),
+                          processes="123 com.example.app\n")
+            original = adb.run_tail
 
-        def truncated_tail(*args, **kwargs):
-            text, _ = original(*args, **kwargs)
-            return text, True
-        adb.run_tail = truncated_tail
-        args = core.action_args("logs", name="com.example.app", target="phone")
-        core.prepare_action(args)
-        result = core.device_action(args, adb)
-        self.assertIn("--pid=123", adb.commands[-1])
-        self.assertEqual(result["pids"], [123])
-        self.assertTrue(result["scan_truncated"])
-        self.assertTrue(result["truncated"])
+            def truncated_tail(*args, **kwargs):
+                text, _ = original(*args, **kwargs)
+                return text, True
+            adb.run_tail = truncated_tail
+            args = core.action_args("logs", kind=kind, name="com.example.app", target="phone")
+            core.prepare_action(args)
+            result = core.device_action(args, adb)
+            if kind == "standard":
+                self.assertIn("--pid=123", adb.commands[-1])
+                self.assertEqual(result["pids"], [123])
+            else:
+                self.assertNotIn("--pid=123", adb.commands[-1])
+                self.assertEqual(result["pids"], [])
+            self.assertEqual(result["line_count"], 2)
+            self.assertTrue(result["scan_truncated"])
+            self.assertTrue(result["truncated"])
 
     def test_clear_is_separate_and_buffers_are_explicit(self):
         adb = FakeAdb()
@@ -155,15 +175,18 @@ class AndroidLogTests(unittest.TestCase):
         self.assertEqual(adb.commands[-1], ["shell", "logcat", "-b", "main,system,crash", "-c"])
 
     def test_forwarded_cli_saves_log_file_locally(self):
-        with tempfile.TemporaryDirectory() as directory:
-            args = core.action_args("logs", output=str(Path(directory) / "logs.txt"))
-            payload = {"text": "sample\n", "line_count": 1}
-            response = io.BytesIO(json.dumps({"ok": True, "result": {"structuredContent": payload}}).encode())
-            with patch("scripts.android_client.urlrequest.urlopen", return_value=response) as request:
-                result = client.execute_via_server(args, "http://127.0.0.1:8000")
-            self.assertEqual(Path(result["path"]).read_text(), "sample\n")
-            sent = json.loads(request.call_args.args[0].data)
-            self.assertNotIn("output", sent["arguments"])
+        for kind in (None, "crash"):
+            with tempfile.TemporaryDirectory() as directory:
+                args = core.action_args("logs", kind=kind, output=str(Path(directory) / "logs.txt"))
+                payload = {"text": "sample\n", "line_count": 1, "kind": kind or "standard"}
+                response = io.BytesIO(json.dumps({"ok": True, "result": {"structuredContent": payload}}).encode())
+                with patch("scripts.android_client.urlrequest.urlopen", return_value=response) as request:
+                    result = client.execute_via_server(args, "http://127.0.0.1:8000")
+                self.assertEqual(Path(result["path"]).read_text(), "sample\n")
+                sent = json.loads(request.call_args.args[0].data)
+                self.assertEqual(sent, {"name": "logs", "arguments": {
+                    "kind": kind or "standard", "priority": "V", "lines": 200,
+                }})
 
     def test_bounded_reader_drains_both_streams_and_discloses_truncation(self):
         script = "import sys; sys.stderr.write('e'*100000); sys.stdout.write('old\\n'+'x'*10000+'\\nlatest\\n')"

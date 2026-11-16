@@ -381,18 +381,12 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return call("open-url", url=url, target=target)  # type: ignore[return-value]
 
     @server.tool(name="logs")
-    def logs_tool(name: str | None = None, priority: Literal["V", "D", "I", "W", "E", "F"] = "V",
+    def logs_tool(kind: Literal["standard", "crash"] = "standard",
+                  name: str | None = None, priority: Literal["V", "D", "I", "W", "E", "F"] = "V",
                   match: str | None = None, lines: int = 200,
                   target: str | None = None) -> dict[str, object]:
-        """Capture recent logcat text without clearing it. Optional name selects a running app's processes; match is literal. Output is limited to lines (1-5000) and 256 KiB."""
-        return call("logs", name=name, priority=priority, match=match, lines=lines, target=target)
-
-    @server.tool(name="crash_logs")
-    def crash_logs_tool(name: str | None = None, priority: Literal["V", "D", "I", "W", "E", "F"] = "V",
-                        match: str | None = None, lines: int = 200,
-                        target: str | None = None) -> dict[str, object]:
-        """Capture retained crash reports, including exited apps. Package/text filters keep report context; output limits may cut a report (truncated=true)."""
-        return call("crash-logs", name=name, priority=priority, match=match, lines=lines, target=target)
+        """Capture logcat without clearing buffers. Standard (default) reads main/system/crash; name selects running app processes. Crash reads retained crash reports, including exited apps; package/literal match filters keep stack context. Priority is a minimum. Output defaults to 200 lines, capped at 5000 lines/256 KiB; truncated marks output limits, scan_truncated marks discarded data beyond the latest 4 MiB."""
+        return call("logs", kind=kind, name=name, priority=priority, match=match, lines=lines, target=target)
 
     @server.tool(name="clear_logs")
     def clear_logs_tool(target: str | None = None) -> dict[str, object]:

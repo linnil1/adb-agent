@@ -156,7 +156,7 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
         return structured["result"]
     if structured is None:
         raise ControlError("local MCP server omitted structured tool output")
-    if args.action in {"logs", "crash-logs"}:
+    if args.action == "logs":
         return save_log_output(structured, args.output)
     if args.action == "stop-screen-record":
         url = structured.get("url") if isinstance(structured, dict) else None

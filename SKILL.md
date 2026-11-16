@@ -45,7 +45,7 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
 | `start-screen-record` | `--time-limit SECONDS` (1-180) | none |
 | `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) |
-| `logs`, `crash-logs` | none | `--name PACKAGE_OR_FRAGMENT --priority V\|D\|I\|W\|E\|F --match TEXT --lines INT --output PATH` |
+| `logs` | none | `--kind standard\|crash` (default standard); `--name PACKAGE_OR_FRAGMENT --priority V\|D\|I\|W\|E\|F --match TEXT --lines INT --output PATH` |
 | `clear-logs` | none | none |
 
 `--fingers` is a JSON array of 2-10 paths, each exactly `{"x1":INT,"y1":INT,"x2":INT,"y2":INT}`; MCP takes the array directly. Coordinates must be 0-65535. Keep paths within the display and verify pinch results with a screenshot.
@@ -71,8 +71,13 @@ python3 scripts/android_control.py --action press-key --target TARGET --key ente
 - DND modes: `off` disables DND, `priority` follows the existing policy, `alarms` allows alarms only, and `none` blocks interruptions. MCP's setter argument is `mode`, matching CLI `--dnd-mode`. Android may link DND, ringer, and stream mute states.
 - Sound setters return observed status with `requested` and `verified`. Combined volume requests apply ringer, level/direction, then mute, without rollback. On verification failure, inspect state before retrying; earlier steps may have applied. Volume/media keys confirm dispatch only, so prefer volume tools for verified changes.
 - Collect recordings with `stop-screen-record`. Starting a new recording discards a finished, uncollected recording; a running recording blocks another start.
-- `logs --name` selects running package processes, including `:service` children; `crash-logs` can match retained reports after exit by exact package. `--match` is literal and priority is a minimum (default V). Output defaults to 200 lines, capped at 5000 lines/256 KiB; `truncated` marks output limits and `scan_truncated` marks discarded data beyond the latest 4 MiB. Only `clear-logs` clears buffers.
+- `logs --kind standard` (default) reads main/system/crash buffers; `--name` selects running package processes, including `:service` children. `logs --kind crash` reads the crash buffer and can match retained reports after exit by exact package; package/text filters retain report and stack context. `--match` is literal and priority is a minimum (default V). Output defaults to 200 lines (`--lines` 1-5000), capped at 256 KiB; `truncated` marks output limits (which may cut a report) and `scan_truncated` marks discarded data beyond the latest 4 MiB. CLI `--output` saves on the client, including forwarded calls. MCP uses `logs(kind="standard", ...)` or `logs(kind="crash", ...)` with the same filters, defaults, and optional target, without an output path. Only the separate `clear-logs` / MCP `clear_logs` clears buffers.
 - App fragments match package names, not localized labels. `type-text` converts literal `%s` into a space. For unsupported operations, use ADB on the same host with explicit `-s TARGET`.
+
+```bash
+python3 scripts/android_control.py --action logs --target TARGET --name com.example.app --priority W --lines 200
+python3 scripts/android_control.py --action logs --target TARGET --kind crash --name com.example.app --output crash.log
+```
 
 ## MCP
 

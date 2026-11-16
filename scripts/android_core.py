@@ -25,7 +25,7 @@ ACTIONS = (
     "screenshot", "describe-screen", "tap", "swipe", "long-press", "type-text",
     "press-key", "launch-app", "force-stop-app", "open-url",
     "start-screen-record", "stop-screen-record", "multi-touch", "zoom",
-    "logs", "crash-logs", "clear-logs",
+    "logs", "clear-logs",
     "screen-status", "set-screen", "rotate-screen",
     "wait-for-ui", "connect", "disconnect", "pair",
     "get-volume", "set-volume", "get-dnd", "set-dnd",
@@ -43,8 +43,7 @@ ACTION_FIELDS = {
     "launch-app": {"name", "force_restart"}, "force-stop-app": {"name"},
     "open-url": {"url"},
     "start-screen-record": {"time_limit"}, "stop-screen-record": {"output"},
-    "logs": {"name", "priority", "match", "lines", "output"},
-    "crash-logs": {"name", "priority", "match", "lines", "output"},
+    "logs": {"kind", "name", "priority", "match", "lines", "output"},
     "clear-logs": set(),
     "screen-status": set(), "set-screen": {"state"},
     "rotate-screen": {"rotation"},
@@ -742,7 +741,7 @@ def save_log_output(result: dict[str, object], output: str | None) -> dict[str, 
 
 
 def capture_logs(adb: Adb, serial: str, args: argparse.Namespace) -> dict[str, object]:
-    crash = args.action == "crash-logs"
+    crash = args.kind == "crash"
     package = None
     pids: list[int] = []
     if args.name:
@@ -756,7 +755,7 @@ def capture_logs(adb: Adb, serial: str, args: argparse.Namespace) -> dict[str, o
                 ):
                     pids.append(int(parts[0]))
             if not pids:
-                raise ControlError(f"app is not running: {package}; use crash-logs for earlier crashes")
+                raise ControlError(f"app is not running: {package}; use logs --kind crash for earlier crashes")
     buffers = "crash" if crash else "main,system,crash"
     command = ["logcat", "-d", "-b", buffers, "-v", "threadtime"]
     if len(pids) == 1:
@@ -768,7 +767,7 @@ def capture_logs(adb: Adb, serial: str, args: argparse.Namespace) -> dict[str, o
                              pids=pids, priority=args.priority, match=args.match, lines=args.lines)
     result["truncated"] = result["truncated"] or scan_truncated
     return save_log_output({
-        "target": serial, "action": args.action, "package": package, "pids": pids,
+        "target": serial, "action": args.action, "kind": args.kind, "package": package, "pids": pids,
         "buffers": buffers.split(","), "priority": args.priority, "match": args.match,
         "line_limit": args.lines, "scan_truncated": scan_truncated, **result,
     }, args.output)
@@ -865,7 +864,7 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         if action == "screen-status":
             return screen_status(adb, serial)
         return control_screen(adb, serial, action, args.rotation, state=args.state)
-    elif action in {"logs", "crash-logs"}:
+    elif action == "logs":
         return capture_logs(adb, serial, args)
     elif action == "clear-logs":
         shell(adb, serial, ["logcat", "-b", "main,system,crash", "-c"])
@@ -997,6 +996,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url")
     parser.add_argument("--time-limit", type=int, help=f"recording seconds, 1-{MAX_RECORD_SECONDS}")
     parser.add_argument("--priority", choices=list(LOG_PRIORITIES), help="minimum log priority (default V)")
+    parser.add_argument("--kind", choices=("standard", "crash"), help="log kind (default standard)")
     parser.add_argument("--match", help="literal log text filter")
     parser.add_argument("--lines", type=int, help="maximum returned log lines, 1-5000 (default 200)")
     parser.add_argument("--rotation", choices=("0", "90", "180", "270", "auto"),
@@ -1067,7 +1067,11 @@ def prepare_action(args: argparse.Namespace) -> None:
             args.wait_timeout = 30.0
         if not math.isfinite(args.wait_timeout) or not 0 < args.wait_timeout <= 300:
             raise ControlError("--wait-timeout must be greater than 0 and at most 300 seconds")
-    if args.action in {"logs", "crash-logs"}:
+    if args.action == "logs":
+        if args.kind is None:
+            args.kind = "standard"
+        if args.kind not in {"standard", "crash"}:
+            raise ControlError("log kind must be standard or crash")
         if args.lines is None:
             args.lines = 200
         if not 1 <= args.lines <= 5000:

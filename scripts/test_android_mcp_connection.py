@@ -43,6 +43,11 @@ elif args[0] == 'pair':
     else:
         print('invalid pairing code ' + code, file=sys.stderr)
         sys.exit(1)
+elif args[0] == '-s' and args[2] == 'logcat':
+    print('10-15 17:53:34.130   123   123 E AndroidRuntime: FATAL EXCEPTION: main')
+    print('10-15 17:53:34.131   123   123 E AndroidRuntime: Process: com.example.app, PID: 123')
+    print('10-15 17:53:34.132   123   123 E AndroidRuntime: java.lang.IllegalStateException: broken')
+    print('10-15 17:53:34.133   123   123 E AndroidRuntime:     at com.example.Code.run(Code.java:20)')
 else:
     sys.exit(1)
 """)
@@ -144,6 +149,32 @@ else:
         schema = tools["press_key"]["inputSchema"]
         self.assertIn("key", schema["required"])
         self.assertEqual(set(schema["properties"]["key"]["enum"]), set(KEY_MAP))
+
+    def test_logs_schema_and_both_kinds_use_one_tool(self):
+        tools = {tool["name"]: tool for tool in self.get("/api/tools")["tools"]}
+        self.assertNotIn("crash_logs", tools)
+        self.assertIn("clear_logs", tools)
+        schema = tools["logs"]["inputSchema"]
+        self.assertEqual(schema["properties"]["kind"]["enum"], ["standard", "crash"])
+        self.assertEqual(schema["properties"]["kind"]["default"], "standard")
+        result = self.call("logs", {"kind": "unknown"})
+        self.assertFalse(result.get("ok") and not result.get("result", {}).get("isError"), result)
+        address = "phone.local:5555"
+        self.assertTrue(self.call("connect", {"address": address})["ok"])
+        try:
+            for kind, filters in (("standard", {}), ("crash", {"name": "com.example.app", "match": "broken"})):
+                arguments = {"target": address, **filters}
+                if kind == "crash":
+                    arguments["kind"] = kind
+                response = self.call("logs", arguments)
+                self.assertTrue(response["ok"], response)
+                result = response["result"]["structuredContent"]
+                self.assertEqual((result["action"], result["kind"]), ("logs", kind))
+                self.assertEqual(result["buffers"], ["crash"] if kind == "crash" else ["main", "system", "crash"])
+                self.assertIn("Code.java:20", result["text"])
+                self.assertEqual(result["line_count"], 4)
+        finally:
+            self.call("disconnect", {"address": address})
 
     def test_pair_validation_and_adb_errors_never_echo_input_codes(self):
         for args, code in (

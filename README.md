@@ -40,18 +40,17 @@ See [`SKILL.md`](SKILL.md) for the argument schema and operational details.
 | `open-url` | Open an HTTP or HTTPS URL on the device. |
 | `start-screen-record` | Start a background screen recording with a required time limit (1-180 seconds). |
 | `stop-screen-record` | Stop the recording and save the MP4. |
-| `logs` | Capture recent device or running-app logs, with priority/text filters. |
-| `crash-logs` | Capture retained crash reports, including exited apps. |
+| `logs` | Capture recent logs (`--kind standard`, default) or retained crash reports (`--kind crash`), with priority/text filters. |
 | `clear-logs` | Explicitly clear main, system, and crash log buffers. |
 
 Log capture returns bounded text and metadata; it never clears buffers. For example:
 
 ```bash
 python3 scripts/android_control.py --action logs --name com.example.app --priority W --lines 200
-python3 scripts/android_control.py --action crash-logs --name com.example.app --output crash.log
+python3 scripts/android_control.py --action logs --kind crash --name com.example.app --output crash.log
 ```
 
-`--match` is a literal text filter. Crash filters select reports with their stack context; line/byte limits may cut a report and set `truncated`. App logs resolve currently running package processes; crash matching also works after the app exits. Output defaults to 200 physical lines, at most 5000 lines/256 KiB; capture retains the latest 4 MiB before filtering and reports `scan_truncated` if older bytes were discarded. The CLI saves `--output` on the client machine even when forwarded through the server. MCP exposes `logs`, `crash_logs`, and `clear_logs`.
+`--kind standard` (default) reads main, system, and crash buffers; `--name` selects currently running package processes, including service children. `--kind crash` reads the crash buffer and matches retained reports even after an app exits. `--match` is a literal text filter; crash filters select reports with their stack context. Line/byte limits may cut a report and set `truncated`. Priority is a minimum (default V). Output defaults to 200 physical lines, at most 5000 lines/256 KiB; capture retains the latest 4 MiB before filtering and reports `scan_truncated` if older bytes were discarded. The CLI saves `--output` on the client machine even when forwarded through the server. MCP exposes `logs` with `kind="standard"` or `kind="crash"`, and the separate `clear_logs` tool.
 
 Connection actions work before a device is connected and run on the same host as the MCP server's ADB. Thus `localhost` is the server's localhost. Use an explicit `--address HOST:PORT` (or `[IPv6]:PORT`) rather than `--target`. Pairing uses the phone's pairing port, which can differ from its connection port:
 
