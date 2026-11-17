@@ -1274,10 +1274,10 @@ def prepare_action(args: argparse.Namespace) -> None:
             raise ControlError("multi-touch duration must be between 1 and 3000 ms")
     if args.time_limit is not None and not 1 <= args.time_limit <= MAX_RECORD_SECONDS:
         raise ControlError(f"--time-limit must be between 1 and {MAX_RECORD_SECONDS} seconds")
-    if args.action == "stop-screen-record" and args.output is None:
-        args.output = "android-screen.mp4"
-    if args.action == "screenshot" and args.output is None:
-        args.output = "android-screen.png"
+    if args.action in {"screenshot", "stop-screen-record"} and args.output is None:
+        extension = "png" if args.action == "screenshot" else "mp4"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        args.output = f"android-screen-{timestamp}.{extension}"
 
 
 def execute(args: argparse.Namespace) -> object:

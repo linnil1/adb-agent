@@ -167,6 +167,10 @@ and download requests allow at least the daemon's 300-second capture budget.
 Clearing the dashboard recording removes its viewer cache; it does not delete
 the retained device copy.
 
+Without `--output`, screenshots and collected recordings save in the current
+directory as `android-screen-YYYYMMDD-HHMMSS-ffffff.png` or `.mp4`, using local
+time with microseconds. An explicit `--output PATH` uses that exact path.
+
 Without a cached screenshot, `describe_screen` displays a standalone view of accessibility bounds and labels, with the canvas extent estimated from the elements. With a screenshot, the same elements overlay the image. Taking a new screenshot preserves the latest description until it is replaced by `describe_screen` or removed with **Clear description**.
 
 Each device shows **Clear screenshot** and **Clear description** buttons only when the corresponding content exists. They remove only that device's selected viewer cache and synchronize open dashboards. Clearing the screenshot stops interactive capture and preserves any description; clearing the description preserves the screenshot. These controls do not modify the phone or command history.

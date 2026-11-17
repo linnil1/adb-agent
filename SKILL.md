@@ -32,7 +32,7 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `set-dnd` | `--dnd-mode off\|priority\|alarms\|none` | none |
 | `get-volume` | none | `--stream media\|ring\|notification\|alarm\|voice-call` |
 | `set-volume` | At least one of `--level INT`, `--muted true\|false`, `--direction raise\|lower`, `--ringer-mode normal\|vibrate\|silent` | `--stream STREAM` (default media); level and direction are mutually exclusive |
-| `screenshot` | none | `--output PATH` (default `android-screen.png`); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
+| `screenshot` | none | `--output PATH` (default timestamped PNG in current directory); `--x1 INT --y1 INT --x2 INT --y2 INT` region |
 | `describe-screen` | none | `--format json\|original` (default `json`) |
 | `wait-for-ui` | At least one exact, nonempty `--text TEXT`, `--description TEXT`, `--resource-id ID` | `--state present\|gone\|enabled` (default present); `--wait-timeout SECONDS` (default 30, greater than 0 and at most 300) |
 | `tap` | `--x INT --y INT` | none |
@@ -46,7 +46,7 @@ Coordinates are device pixels; gesture durations are milliseconds. Pass only fie
 | `force-stop-app` | `--name PACKAGE_OR_FRAGMENT` | none |
 | `open-url` | `--url HTTP_OR_HTTPS_URL` | none |
 | `start-screen-record` | `--time-limit SECONDS` (1-180) | none |
-| `stop-screen-record` | none | `--output PATH` (default `android-screen.mp4`) |
+| `stop-screen-record` | none | `--output PATH` (default timestamped MP4 in current directory) |
 | `logs` | none | `--kind standard\|crash` (default standard); `--name PACKAGE_OR_FRAGMENT --priority V\|D\|I\|W\|E\|F --match TEXT --lines INT --output PATH` |
 | `clear-logs` | none | none |
 
@@ -74,6 +74,7 @@ python3 scripts/android_control.py --action press-key --target TARGET --key ente
 - DND modes: `off` disables DND, `priority` follows the existing policy, `alarms` allows alarms only, and `none` blocks interruptions. MCP's setter argument is `mode`, matching CLI `--dnd-mode`. Android may link DND, ringer, and stream mute states.
 - Sound setters return observed status with `requested` and `verified`. Combined volume requests apply ringer, level/direction, then mute, without rollback. On verification failure, inspect state before retrying; earlier steps may have applied. Volume/media keys confirm dispatch only, so prefer volume tools for verified changes.
 - Collect recordings with `stop-screen-record`; the MP4 is validated and saved atomically. The completed device copy is retained for retries until the next recording starts, even after a successful download. A running recording blocks another start. Recording dimensions follow the current logical display orientation, capped at 1280 on the longer side.
+- Omitted media output paths use `android-screen-YYYYMMDD-HHMMSS-ffffff.png` or `.mp4` in the current directory (local time with microseconds). An explicit `--output PATH` is used exactly.
 - `logs --kind standard` (default) reads main/system/crash buffers; `--name` selects running package processes, including `:service` children. `logs --kind crash` reads the crash buffer and can match retained reports after exit by exact package; package/text filters retain report and stack context. `--match` is literal and priority is a minimum (default V). Output defaults to 200 lines (`--lines` 1-5000), capped at 256 KiB; `truncated` marks output limits (which may cut a report) and `scan_truncated` marks discarded data beyond the latest 4 MiB. CLI `--output` saves on the client, including forwarded calls. MCP uses `logs(kind="standard", ...)` or `logs(kind="crash", ...)` with the same filters, defaults, and optional target, without an output path. Only the separate `clear-logs` / MCP `clear_logs` clears buffers.
 - App matching prefers the full package name, then an exact final segment, then a substring. For several strongest matches, `launch-app` prefers a unique launchable package; several launchable candidates remain ambiguous. Localized labels are not searched. Launching resolves the launcher activity and uses `am start -W`, preserving rotation settings. Results include `component` and observed `focus` (nullable); check `focus.source` because `mFocusedApp` can be stale.
 - `type-text` preserves literal `%s` and accepts printable ASCII only. Use `press-key` for Enter/Tab and an appropriate IME for non-ASCII text. For unsupported operations, use ADB on the same host with explicit `-s TARGET`.

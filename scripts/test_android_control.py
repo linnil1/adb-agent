@@ -792,7 +792,14 @@ class AndroidControlTests(unittest.TestCase):
             android.prepare_action(android.action_args("start-screen-record"))
         stop = android.action_args("stop-screen-record")
         android.prepare_action(stop)
-        self.assertEqual(stop.output, "android-screen.mp4")
+        self.assertRegex(stop.output, r"^android-screen-\d{8}-\d{6}-\d{6}\.mp4$")
+        selected = stop.output
+        android.prepare_action(stop)
+        self.assertEqual(stop.output, selected)
+        for action in ("screenshot", "stop-screen-record"):
+            explicit = android.action_args(action, output="exact-name.file")
+            android.prepare_action(explicit)
+            self.assertEqual(explicit.output, "exact-name.file")
         with self.assertRaisesRegex(android.ControlError, "between 1 and 180"):
             android.prepare_action(android.action_args("start-screen-record", time_limit=181))
         with self.assertRaisesRegex(android.ControlError, "not valid for status"):
@@ -812,12 +819,14 @@ class AndroidControlTests(unittest.TestCase):
                     return b"stopped\n" + video
                 raise AssertionError(args)
         with chdir(self.temporary_directory.name):
-            for action, filename, data in (
-                ("screenshot", "android-screen.png", png),
-                ("stop-screen-record", "android-screen.mp4", video),
+            for action, extension, data in (
+                ("screenshot", "png", png),
+                ("stop-screen-record", "mp4", video),
             ):
                 with self.subTest(default_output=action):
                     result = android.device_action(android.action_args(action, target="phone"), FakeAdb())
+                    filename = Path(result["path"]).name
+                    self.assertRegex(filename, rf"^android-screen-\d{{8}}-\d{{6}}-\d{{6}}\.{extension}$")
                     self.assertEqual(Path(filename).read_bytes(), data)
                     self.assertEqual(result["path"], str(Path(filename).resolve()))
         calls.clear()
