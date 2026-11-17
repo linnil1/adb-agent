@@ -694,28 +694,39 @@ class AndroidControlTests(unittest.TestCase):
         return box(b"ftyp", b"isom" + bytes(4)) + box(b"mdat", b"..mvhd..") + box(b"moov", box(b"mvhd", mvhd))
 
     def test_start_screen_record_runs_detached_and_reports_state(self):
-        replies = iter([b"started\n", b"running\n", b"failed\nError: encoder rejected size\n"])
+        replies = iter([b"started\n", b"running\n", b"failed\nError: encoder rejected size\n", b"started\n"])
         scripts = []
+        display = DISPLAY
 
         class FakeAdb:
             def run(self, args, **kwargs):
                 if args == ["devices", "-l"]:
                     return b"List of devices attached\ndevice-1 device\n"
+                if args == ["shell", "dumpsys", "display"]:
+                    return display
                 scripts.append(args[1])
                 return next(replies)
 
         args = android.action_args("start-screen-record", time_limit=30)
         android.prepare_action(args)
         self.assertEqual(android.device_action(args, FakeAdb())["time_limit"], 30)
-        self.assertIn("nohup screenrecord $size --time-limit 30 --bit-rate 4000000", scripts[0])
+        self.assertIn("nohup screenrecord --size 720x1280 --time-limit 30 --bit-rate 4000000", scripts[0])
         with self.assertRaisesRegex(android.ControlError, "already running"):
             android.device_action(args, FakeAdb())
         with self.assertRaisesRegex(android.ControlError, "failed to start: Error: encoder rejected size"):
             android.device_action(args, FakeAdb())
+        display = DISPLAY.replace(b"1080 x 1920", b"1920 x 1080")
+        android.device_action(args, FakeAdb())
+        self.assertIn("nohup screenrecord --size 1280x720", scripts[-1])
 
     def test_stop_screen_record_saves_mp4_with_its_length(self):
         video = self.fake_mp4()
-        replies = iter([b"stopped\n" + video, b"none\n", b"stopped\n"])
+        root = Path(self.temporary_directory.name)
+        remote = root / "device-record"
+        remote_video = remote.with_suffix(".mp4")
+        remote_pid = remote.with_suffix(".pid")
+        remote_video.write_bytes(video)
+        remote_pid.write_text("999999999")
 
         class FakeAdb:
             timeout = 30.0
@@ -723,18 +734,58 @@ class AndroidControlTests(unittest.TestCase):
             def run(self, args, **kwargs):
                 if args == ["devices", "-l"]:
                     return b"List of devices attached\ndevice-1 device\n"
-                return next(replies)
+                self_test.assertEqual(args[0], "exec-out")
+                self_test.assertGreaterEqual(kwargs["timeout"], 300)
+                return subprocess.run(["/bin/sh", "-c", args[1]], check=True,
+                                      capture_output=True, timeout=5).stdout
 
-        output = Path(self.temporary_directory.name) / "screen.mp4"
+        self_test = self
+        output = root / "screen.mp4"
         args = android.action_args("stop-screen-record", output=str(output))
-        android.prepare_action(args)
-        result = android.device_action(args, FakeAdb())
-        self.assertEqual(result["seconds"], 4.58)
-        self.assertEqual(output.read_bytes(), video)
-        with self.assertRaisesRegex(android.ControlError, "no screen recording is running"):
+        with patch("scripts.android_core.RECORD_PATH", str(remote)):
+            args.output = str(root)
+            with self.assertRaisesRegex(android.ControlError, "could not save recording"):
+                android.device_action(args, FakeAdb())
+            self.assertEqual(remote_video.read_bytes(), video)
+            self.assertTrue(remote_pid.exists())
+            args.output = str(output)
+            result = android.device_action(args, FakeAdb())
+            self.assertEqual(result["seconds"], 4.58)
+            self.assertEqual(output.read_bytes(), video)
+            self.assertEqual(remote_video.read_bytes(), video)
+            output.write_bytes(b"previous recording")
+            with patch("scripts.android_core.os.replace", side_effect=OSError("disk full")), \
+                 self.assertRaisesRegex(android.ControlError, "device copy retained"):
+                android.device_action(args, FakeAdb())
+            self.assertEqual(output.read_bytes(), b"previous recording")
+            self.assertEqual(list(root.glob(".screen.mp4.*.tmp")), [])
+            for broken in (b"", video[:12], video[:-5], video + b"trailing", self.fake_mp4(timescale=0)):
+                with self.subTest(broken_length=len(broken)):
+                    remote_video.write_bytes(broken)
+                    with self.assertRaisesRegex(android.ControlError, "no valid MP4"):
+                        android.device_action(args, FakeAdb())
+                    self.assertEqual(output.read_bytes(), b"previous recording")
+                    self.assertTrue(remote_video.exists())
+            remote_video.write_bytes(video)
             android.device_action(args, FakeAdb())
-        with self.assertRaisesRegex(android.ControlError, "no valid MP4"):
-            android.device_action(args, FakeAdb())
+            self.assertEqual(output.read_bytes(), video)
+            # A retained PID may have been reused by another screenrecord.
+            unrelated = subprocess.Popen(["/bin/bash", "-c", "exec -a screenrecord sleep 30"])
+            try:
+                deadline = time.monotonic() + 2
+                while not Path(f"/proc/{unrelated.pid}/cmdline").read_bytes().startswith(b"screenrecord\0"):
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                remote_pid.write_text(str(unrelated.pid))
+                android.device_action(args, FakeAdb())
+                self.assertIsNone(unrelated.poll())
+            finally:
+                unrelated.terminate()
+                unrelated.wait(timeout=5)
+            remote_pid.unlink()
+            remote_video.unlink()
+            with self.assertRaisesRegex(android.ControlError, "no screen recording is running"):
+                android.device_action(args, FakeAdb())
 
     def test_recording_arguments(self):
         with self.assertRaisesRegex(android.ControlError, "--time-limit is required"):
@@ -845,23 +896,39 @@ class AndroidControlTests(unittest.TestCase):
 
     def test_execute_via_server_downloads_recording(self):
         server = "http://127.0.0.1:8000"
-        url = server + "/api/viewer/recording?target=device-1&revision=1"
-        call = io.BytesIO(json.dumps({"ok": True, "result": {"structuredContent": {
-            "target": "device-1", "revision": 1, "seconds": 4.58, "bytes": 3, "url": url,
-        }}}).encode())
+        relative = "/api/viewer/recording?target=device-1&revision=1"
+        video = self.fake_mp4()
         output = Path(self.temporary_directory.name) / "screen.mp4"
         args = android.build_parser().parse_args([
             "--action", "stop-screen-record", "--output", str(output),
         ])
-        with patch.object(
-            android.urlrequest, "urlopen", side_effect=[call, io.BytesIO(b"mp4")]
-        ) as urlopen:
-            result = android.execute_via_server(args, server)
-        self.assertEqual(result, {"target": "device-1", "path": str(output), "bytes": 3, "seconds": 4.58})
-        self.assertEqual(urlopen.call_args_list[1].args[0], url)
-        self.assertEqual(json.loads(urlopen.call_args_list[0].args[0].data), {
-            "name": "stop_screen_record", "arguments": {},
-        })
+        for url in (relative, server + relative, "https://public.example:40000/phone" + relative):
+            with self.subTest(public_url=url):
+                call = io.BytesIO(json.dumps({"ok": True, "result": {"structuredContent": {
+                    "target": "device-1", "revision": 1, "seconds": 4.58, "bytes": len(video), "url": url,
+                }}}).encode())
+                with patch.object(android.urlrequest, "urlopen", side_effect=[call, io.BytesIO(video)]) as urlopen:
+                    result = android.execute_via_server(args, server)
+                self.assertEqual(result, {"target": "device-1", "path": str(output), "bytes": len(video), "seconds": 4.58})
+                self.assertEqual(output.read_bytes(), video)
+                self.assertEqual(urlopen.call_args_list[1].args[0], server + relative)
+                self.assertGreaterEqual(urlopen.call_args_list[0].kwargs["timeout"], 300 + args.timeout)
+                self.assertGreaterEqual(urlopen.call_args_list[1].kwargs["timeout"], 300)
+                self.assertEqual(json.loads(urlopen.call_args_list[0].args[0].data), {
+                    "name": "stop_screen_record", "arguments": {},
+                })
+        for broken, expected_bytes, message in (
+            (video[:-1], len(video), "download was incomplete"),
+            (video[:12], 12, "no valid MP4"),
+        ):
+            with self.subTest(download_length=len(broken)):
+                call = io.BytesIO(json.dumps({"ok": True, "result": {"structuredContent": {
+                    "target": "device-1", "revision": 1, "bytes": expected_bytes, "url": relative,
+                }}}).encode())
+                with patch.object(android.urlrequest, "urlopen", side_effect=[call, io.BytesIO(broken)]), \
+                     self.assertRaisesRegex(android.ControlError, message):
+                    android.execute_via_server(args, server)
+                self.assertEqual(output.read_bytes(), video)
 
     def test_set_default_target_requires_explicit_ready_target(self):
         args = android.build_parser().parse_args(["--action", "set-default-target"])

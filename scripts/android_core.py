@@ -13,6 +13,7 @@ import shutil
 import signal
 import struct
 import subprocess
+import tempfile
 import time
 import zlib
 import xml.etree.ElementTree as ET
@@ -74,6 +75,7 @@ RECORD_PATH = "/data/local/tmp/android-control-record"
 RECORD_BIT_RATE = 4_000_000
 RECORD_MAX_SIDE = 1280
 MAX_RECORD_SECONDS = 180
+RECORD_CAPTURE_TIMEOUT = 300.0
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_TARGET_TTL = 60 * 60
 STATE_FILE_ENV = "ANDROID_CONTROL_STATE_FILE"
@@ -277,6 +279,20 @@ def advertised_server_url(host: str, port: int) -> str:
     if ":" in advertised and not advertised.startswith("["):
         advertised = f"[{advertised}]"
     return f"http://{advertised}:{port}"
+
+
+def validate_public_base_url(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        raise ControlError("--public-base-url must be an absolute HTTP(S) URL") from None
+    if (any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+            or parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment or (port is not None and not 1 <= port <= 65535)):
+        raise ControlError("--public-base-url must be an absolute HTTP(S) URL without credentials, query, or fragment")
+    return value.rstrip("/")
 
 
 def write_server_file(url: str, pid: int | None = None) -> None:
@@ -562,17 +578,16 @@ def capture_screen(
 
 
 def start_screen_record(adb: Adb, serial: str, time_limit: int) -> None:
+    width, height = logical_display_size(adb, serial)
+    scale = min(1.0, RECORD_MAX_SIDE / max(width, height))
+    width, height = max(2, int(width * scale) // 2 * 2), max(2, int(height * scale) // 2 * 2)
     # Detached on the device, so later adb calls (or CLI runs) can stop it.
     script = (
-        f"f={RECORD_PATH}; "
-        "if [ -f $f.pid ] && grep -q screenrecord /proc/$(cat $f.pid)/cmdline 2>/dev/null; "
-        "then echo running; exit 0; fi; rm -f $f.mp4 $f.log; "
-        # Keep the screen's aspect ratio; encoders often reject full resolution and letterbox.
-        "s=$(wm size | tail -n 1 | sed 's/.*: //'); w=${s%x*}; h=${s#*x}; size=; "
-        "case \"$w$h\" in *[!0-9]*|'') ;; *) l=$((w > h ? w : h)); "
-        f"if [ $l -gt {RECORD_MAX_SIDE} ]; then w=$((w * {RECORD_MAX_SIDE} / l / 2 * 2)); "
-        f"h=$((h * {RECORD_MAX_SIDE} / l / 2 * 2)); fi; size=\"--size ${{w}}x${{h}}\";; esac; "
-        f"nohup screenrecord $size --time-limit {time_limit} --bit-rate {RECORD_BIT_RATE} $f.mp4 "
+        f"f={RECORD_PATH}; p=$(cat $f.pid 2>/dev/null); "
+        'if [ -n "$p" ] && grep -q screenrecord /proc/$p/cmdline 2>/dev/null '
+        '&& grep -Fq "$f.mp4" /proc/$p/cmdline 2>/dev/null; '
+        "then echo running; exit 0; fi; rm -f $f.mp4 $f.log $f.pid; "
+        f"nohup screenrecord --size {width}x{height} --time-limit {time_limit} --bit-rate {RECORD_BIT_RATE} $f.mp4 "
         "</dev/null >$f.log 2>&1 & echo $! > $f.pid; "
         "sleep 0.5; if [ -d /proc/$! ]; then echo started; else echo failed; cat $f.log; rm -f $f.pid; fi"
     )
@@ -606,6 +621,8 @@ def mp4_duration(video: bytes) -> float | None:
         for child, body, child_end in mp4_boxes(video, start, end):
             if child != b"mvhd" or child_end - body < 32:
                 continue
+            if video[body] not in (0, 1):
+                return None
             if video[body] == 1:
                 timescale, duration = struct.unpack(">IQ", video[body + 20:body + 32])
             else:
@@ -614,24 +631,62 @@ def mp4_duration(video: bytes) -> float | None:
     return None
 
 
+def validate_recording(video: bytes) -> float:
+    boxes = list(mp4_boxes(video, 0, len(video)))
+    kinds = {kind for kind, _, _ in boxes}
+    seconds = mp4_duration(video)
+    if (not boxes or boxes[0][0] != b"ftyp" or boxes[0][2] - boxes[0][1] < 8
+            or boxes[-1][2] != len(video)
+            or not {b"moov", b"mdat"} <= kinds or seconds is None):
+        raise ControlError("screen recording produced no valid MP4 (incomplete or malformed); device copy retained")
+    return seconds
+
+
+def save_recording(video: bytes, output: str) -> dict[str, object]:
+    seconds = validate_recording(video)
+    temporary = None
+    try:
+        path = Path(output).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(video)
+            file.flush()
+            os.fsync(file.fileno())
+        temporary.replace(path)
+        return {"path": str(path), "bytes": len(video), "seconds": seconds}
+    except OSError as error:
+        raise ControlError(f"could not save recording: {error}; device copy retained, retry stop-screen-record") from error
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def stop_screen_record(adb: Adb, serial: str) -> tuple[bytes, float | None]:
-    """Stop the recording (or collect one that hit its time limit); return MP4 and seconds."""
+    """Stop or recollect a recording; retain the device copy until the next start."""
     script = (
         f"f={RECORD_PATH}; [ -f $f.pid ] || {{ echo none; exit 0; }}; p=$(cat $f.pid); "
         # SIGINT lets screenrecord finish the MP4 before exiting.
-        "if grep -q screenrecord /proc/$p/cmdline 2>/dev/null; then kill -INT $p; i=0; "
+        'if grep -q screenrecord /proc/$p/cmdline 2>/dev/null '
+        '&& grep -Fq "$f.mp4" /proc/$p/cmdline 2>/dev/null; then kill -INT $p; i=0; '
         "while [ -d /proc/$p ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
-        "echo stopped; cat $f.mp4 2>/dev/null; rm -f $f.mp4 $f.pid $f.log"
+        # Retain the completed file and PID marker so capture/save can be retried.
+        'if [ -d /proc/$p ] && grep -q screenrecord /proc/$p/cmdline 2>/dev/null '
+        '&& grep -Fq "$f.mp4" /proc/$p/cmdline 2>/dev/null; '
+        "then echo busy; exit 0; fi; echo stopped; cat $f.mp4"
     )
-    output = adb.run(["exec-out", script], serial=serial, timeout=max(adb.timeout, 300))
+    output = adb.run(["exec-out", script], serial=serial, timeout=max(adb.timeout, RECORD_CAPTURE_TIMEOUT))
     line, _, video = output.partition(b"\n")
     if line.strip() == b"none":
         raise ControlError("no screen recording is running")
+    if line.strip() == b"busy":
+        raise ControlError("screen recording has not finished stopping; device copy retained, retry stop-screen-record")
     if line.strip() != b"stopped":
         raise ControlError("screen recording status is invalid")
-    if video[4:8] != b"ftyp":
-        raise ControlError("screen recording produced no valid MP4")
-    return video, mp4_duration(video)
+    return video, validate_recording(video)
 
 
 def parse_packages(output: str) -> list[str]:
@@ -1056,11 +1111,8 @@ def device_action(args: argparse.Namespace, adb: Adb) -> object:
         start_screen_record(adb, serial, args.time_limit)
         return {"target": serial, "action": action, "time_limit": args.time_limit}
     elif action == "stop-screen-record":
-        video, seconds = stop_screen_record(adb, serial)
-        output = Path(args.output).expanduser().resolve()
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(video)
-        return {"target": serial, "path": str(output), "bytes": len(video), "seconds": seconds}
+        video, _ = stop_screen_record(adb, serial)
+        return {"target": serial, **save_recording(video, args.output)}
     elif action == "open-url":
         parsed = urlsplit(args.url)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
@@ -1080,6 +1132,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--host", help="MCP bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, help="MCP bind port (default: 8000)")
+    parser.add_argument("--public-base-url", help="public HTTP(S) base URL for recording downloads, including any proxy prefix")
     parser.add_argument("--direct", action="store_true", help="bypass a discovered local MCP server")
     parser.add_argument("--output")
     parser.add_argument("--format", choices=("original", "json"))

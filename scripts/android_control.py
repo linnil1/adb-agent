@@ -34,13 +34,14 @@ def main(argv: list[str] | None = None) -> int:
         port = args.port or 8000
         if not 1 <= port <= 65535:
             raise ControlError("--port must be between 1 and 65535")
+        public_base_url = validate_public_base_url(args.public_base_url) if args.public_base_url is not None else None
         try:
-            run_mcp(host, port, args.adb, args.timeout)
+            run_mcp(host, port, args.adb, args.timeout, public_base_url)
         except KeyboardInterrupt:
             pass
     else:
-        if args.host is not None or args.port is not None:
-            raise ControlError("--host and --port require --mcp")
+        if args.host is not None or args.port is not None or args.public_base_url is not None:
+            raise ControlError("--host, --port, and --public-base-url require --mcp")
         if args.action == "pair" and args.address is not None and args.pair_code is None:
             if not sys.stdin.isatty():
                 raise ControlError("--pair-code is required for non-interactive pairing")

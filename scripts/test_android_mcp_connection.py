@@ -16,7 +16,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, ProxyHandler, build_opener
 
-from scripts.android_core import ACTIONS, KEY_MAP, encode_png
+from scripts.android_core import ACTIONS, KEY_MAP, action_args, encode_png
+from scripts import android_client as client
 from scripts.test_support import python_command
 
 
@@ -73,7 +74,9 @@ elif args[:2] == ['-s', 'phone.local:5555']:
         print('started')
     elif args[0] == 'exec-out' and 'kill -INT' in args[1]:
         if (root / 'recording').exists():
-            (root / 'recording').unlink()
+            if fault == 'slow-stop':
+                import time
+                time.sleep(1.2)
             sys.stdout.buffer.write(b'stopped\n' + (root / 'recording.mp4').read_bytes())
         else: print('none')
     elif args[:2] == ['shell', 'input'] or args[0] == 'push': pass
@@ -104,7 +107,7 @@ class MCPConnectionTests(unittest.TestCase):
         (cls.root / 'rows.gz').write_bytes(zlib.compress(bytes([10, 20, 30, 255]) * 1080 * 2, wbits=31))
         def box(kind, body):
             return (len(body) + 8).to_bytes(4, 'big') + kind + body
-        cls.mp4 = box(b'ftyp', b'isom' + bytes(4)) + box(
+        cls.mp4 = box(b'ftyp', b'isom' + bytes(4)) + box(b'mdat', b'fixture-frame') + box(
             b'moov', box(b'mvhd', bytes(12) + (1000).to_bytes(4, 'big') + (4580).to_bytes(4, 'big') + bytes(80)),
         )
         (cls.root / 'recording.mp4').write_bytes(cls.mp4)
@@ -362,9 +365,58 @@ class MCPConnectionTests(unittest.TestCase):
         self.assertEqual(self.viewer_events()[0]['active_recordings'][0]['time_limit'], 30)
         video = self.result('stop_screen_record')
         self.assertEqual(video['seconds'], 4.58)
-        with self.opener.open(video['url'], timeout=5) as response:
+        self.assertTrue(video['url'].startswith('/api/viewer/recording?'))
+        with self.opener.open(self.url + video['url'], timeout=5) as response:
             self.assertEqual(response.headers['Content-Type'], 'video/mp4')
             self.assertEqual(response.read(), self.mp4)
+        self.assertTrue((self.root / 'recording').exists())
+        # A capture longer than the old 1-second HTTP floor is still collected.
+        (self.root / 'fault').write_text('slow-stop')
+        saved = self.root / 'retried.mp4'
+        result = client.execute_via_server(action_args('stop-screen-record', target='phone.local:5555',
+                                                       timeout=0.1, output=str(saved)), self.url)
+        self.assertEqual(result['seconds'], 4.58)
+        self.assertEqual(saved.read_bytes(), self.mp4)
+        (self.root / 'fault').unlink()
+        # A separately configured public origin must never redirect local CLI downloads.
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            public_port = sock.getsockname()[1]
+        public_origin = 'https://review.example:40000/phone'
+        local_url = f'http://127.0.0.1:{public_port}'
+        environment = dict(self.environment, ANDROID_CONTROL_SERVER_FILE=str(self.root / 'public-discovery.json'))
+        process = subprocess.Popen(
+            python_command(Path(__file__).with_name('android_control.py'), '--mcp', '--port', public_port,
+                           '--adb', self.adb, '--public-base-url', public_origin),
+            env=environment, stdout=self.log, stderr=self.log,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    with self.opener.open(local_url + '/api/info', timeout=1):
+                        break
+                except (OSError, URLError):
+                    if time.monotonic() >= deadline or process.poll() is not None:
+                        self.fail('public-base-url daemon did not start')
+                    time.sleep(0.05)
+            request = Request(local_url + '/api/tools/call', method='POST', headers={
+                'Content-Type': 'application/json', 'Host': 'review.example:40000',
+            }, data=json.dumps({'name': 'stop_screen_record', 'arguments': {'target': 'phone.local:5555'}}).encode())
+            with self.opener.open(request, timeout=5) as response:
+                public_result = json.load(response)['result']['structuredContent']
+            self.assertTrue(public_result['url'].startswith(public_origin + '/api/viewer/recording?'))
+            client.execute_via_server(action_args('stop-screen-record', target='phone.local:5555',
+                                                  output=str(saved)), local_url)
+            self.assertEqual(saved.read_bytes(), self.mp4)
+        finally:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+                raise
         state = self.viewer_events()[0]
         self.assertEqual(state['active_recordings'], [])
         self.assertEqual(state['recordings'][0]['bytes'], len(self.mp4))
@@ -403,6 +455,7 @@ class MCPConnectionTests(unittest.TestCase):
                 self.assertEqual(response.status, 400)
         (self.root / 'fault').write_text('screenshot')
         self.assertFalse(self.call('screenshot')['ok'])
+        (self.root / 'recording').unlink()
         self.assertFalse(self.call('stop_screen_record')['ok'])
         self.assertEqual(self.viewer_events()[0]['active_recordings'], [])
 

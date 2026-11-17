@@ -18,18 +18,21 @@ if __package__:
         SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
         action_args, advertised_server_url, capture_screen, clear_server_file,
         description_elements, execute, resolve_adb, resolve_serial,
-        screenshot_region, stop_screen_record, write_server_file,
+        screenshot_region, stop_screen_record, validate_public_base_url, write_server_file,
     )
 else:
     from android_core import (
         SERVER_API_VERSION, SERVER_NAME, Adb, ControlError,
         action_args, advertised_server_url, capture_screen, clear_server_file,
         description_elements, execute, resolve_adb, resolve_serial,
-        screenshot_region, stop_screen_record, write_server_file,
+        screenshot_region, stop_screen_record, validate_public_base_url, write_server_file,
     )
 
 
-def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
+def run_mcp(host: str, port: int, adb_path: str | None, timeout: float,
+            public_base_url: str | None = None) -> None:
+    if public_base_url is not None:
+        public_base_url = validate_public_base_url(public_base_url)
     try:
         import anyio
         import uvicorn
@@ -147,7 +150,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
         return {key: value for key, value in entry.items() if key not in ("png", "mp4")}
 
     def recording_url(target: str, revision: int) -> str:
-        return server_url + "/api/viewer/recording?" + urlencode({"target": target, "revision": revision})
+        return (public_base_url or "") + "/api/viewer/recording?" + urlencode({"target": target, "revision": revision})
 
     def cache_description(target: str, elements: list[dict[str, object]]) -> None:
         description = {
@@ -415,7 +418,7 @@ def run_mcp(host: str, port: int, adb_path: str | None, timeout: float) -> None:
 
     @server.tool(name="stop_screen_record")
     def stop_screen_record_tool(target: str | None = None) -> dict[str, object]:
-        """Stop the screen recording; return its length, size, and an MP4 download url."""
+        """Stop or recollect a recording; return length, size, and a download URL (relative unless public-base-url is configured). The device copy remains until the next recording starts, so failed downloads can be retried."""
         nonlocal recording_revision
         selected = target
         try:

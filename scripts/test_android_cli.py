@@ -46,9 +46,11 @@ class AndroidCLITests(unittest.TestCase):
 
     def test_daemon_startup_validation_and_pairing_prompt(self):
         for flags, expected, interrupt in (
-            ([], ("127.0.0.1", 8000, None, 30), False),
+            ([], ("127.0.0.1", 8000, None, 30, None), False),
             (["--host", "localhost", "--port", "9123", "--adb", "/fake/adb", "--timeout", "2"],
-             ("localhost", 9123, "/fake/adb", 2), True),
+             ("localhost", 9123, "/fake/adb", 2, None), True),
+            (["--public-base-url", "https://review.example:40000/phone/"],
+             ("127.0.0.1", 8000, None, 30, "https://review.example:40000/phone"), False),
         ):
             with self.subTest(flags=flags), patch.object(
                 cli, "run_mcp", side_effect=KeyboardInterrupt if interrupt else None,
@@ -62,6 +64,12 @@ class AndroidCLITests(unittest.TestCase):
             ["--mcp", "--port", "65536"],
             ["--action", "status", "--host", "localhost"],
             ["--action", "status", "--port", "9123"],
+            ["--action", "status", "--public-base-url", "https://example.com"],
+            *(["--mcp", "--public-base-url", url] for url in (
+                "relative", "file:///tmp", "http://user:password@example.com", "https://example.com/?x=1",
+                "https://example.com/#fragment", "http://example.com:0", "http://example.com:99999",
+                "https://example.com/with space",
+            )),
         ):
             with self.subTest(flags=flags), patch.object(cli, "run_mcp") as daemon, \
                  patch.object(cli, "execute") as direct:

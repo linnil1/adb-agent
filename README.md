@@ -106,6 +106,9 @@ Default endpoints:
 - MCP: `http://127.0.0.1:8000/mcp` (Streamable HTTP only)
 - Dashboard: `http://127.0.0.1:8000/`
 - Override the listener with `--host` and `--port`.
+- Recording URLs are relative by default. Remote MCP clients can set
+  `--public-base-url https://example.com/phone` to receive absolute download URLs
+  with a proxy prefix. Local CLI downloads always use the verified daemon endpoint.
 
 Execution pipeline:
 
@@ -154,6 +157,15 @@ The multi-touch helper requires Android 6.0/API 23+. To rebuild `scripts/multito
 A region screenshot is drawn at its position over the dimmed last full screenshot, outlined, until the next full screenshot replaces it; without a full screenshot it is placed on a blank screen of the reported size. Description overlays, gesture animations, and interactive input keep using full-screen device coordinates.
 
 While a recording runs, the device heading shows a **REC** badge. A stopped recording appears in a **Screen recording** panel with playback, **Download**, and **Clear recording**.
+
+Recording size follows the current logical display orientation, scaled to at most
+1280 pixels on the longer side. Stopping retains the completed device recording;
+repeat `stop-screen-record` to retry a failed transfer or save. Starting the next
+recording replaces that retained copy. CLI saves validate the MP4 and atomically
+replace the requested output only after writing it successfully. Forwarded stop
+and download requests allow at least the daemon's 300-second capture budget.
+Clearing the dashboard recording removes its viewer cache; it does not delete
+the retained device copy.
 
 Without a cached screenshot, `describe_screen` displays a standalone view of accessibility bounds and labels, with the canvas extent estimated from the elements. With a screenshot, the same elements overlay the image. Taking a new screenshot preserves the latest description until it is replaced by `describe_screen` or removed with **Clear description**.
 

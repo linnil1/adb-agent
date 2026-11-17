@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -12,13 +13,13 @@ from urllib.parse import urlencode, urlsplit
 
 if __package__:
     from .android_core import (
-        ACTION_FIELDS, PNG_MAGIC, SERVER_API_VERSION, SERVER_NAME, ControlError,
-        clear_server_file, prepare_action, save_log_output, server_file,
+        ACTION_FIELDS, PNG_MAGIC, RECORD_CAPTURE_TIMEOUT, SERVER_API_VERSION, SERVER_NAME, ControlError,
+        clear_server_file, prepare_action, save_log_output, save_recording, server_file,
     )
 else:
     from android_core import (
-        ACTION_FIELDS, PNG_MAGIC, SERVER_API_VERSION, SERVER_NAME, ControlError,
-        clear_server_file, prepare_action, save_log_output, server_file,
+        ACTION_FIELDS, PNG_MAGIC, RECORD_CAPTURE_TIMEOUT, SERVER_API_VERSION, SERVER_NAME, ControlError,
+        clear_server_file, prepare_action, save_log_output, save_recording, server_file,
     )
 
 
@@ -103,6 +104,10 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
     request_timeout = max(args.timeout, 1)
     if args.action == "wait-for-ui":
         request_timeout = max(request_timeout, args.wait_timeout + args.timeout + 5)
+    elif args.action == "stop-screen-record":
+        request_timeout = max(request_timeout, max(args.timeout, RECORD_CAPTURE_TIMEOUT) + args.timeout + 15)
+    elif args.action == "start-screen-record":
+        request_timeout = max(request_timeout, 2 * args.timeout + 10)
     elif args.action in {"connect", "disconnect", "pair"}:
         request_timeout = max(request_timeout, 2 * args.timeout + 10)
     elif args.action == "get-volume":
@@ -162,19 +167,19 @@ def execute_via_server(args: argparse.Namespace, server_url: str) -> object:
     if args.action == "logs":
         return save_log_output(structured, args.output)
     if args.action == "stop-screen-record":
-        url = structured.get("url") if isinstance(structured, dict) else None
-        if not isinstance(url, str) or not url.startswith(server_url + "/"):
-            raise ControlError("local MCP server omitted the recording url")
+        target = structured.get("target") if isinstance(structured, dict) else None
+        revision = structured.get("revision") if isinstance(structured, dict) else None
+        if not isinstance(target, str) or not isinstance(revision, int):
+            raise ControlError("local MCP server omitted the recording target or revision")
+        # Always download through the verified endpoint, independently of a public
+        # MCP URL that may point at a remote proxy or a different forwarded port.
+        url = server_url + "/api/viewer/recording?" + urlencode({"target": target, "revision": revision})
         try:
-            with urlrequest.urlopen(url, timeout=max(args.timeout, 1)) as response:
+            with urlrequest.urlopen(url, timeout=max(args.timeout, RECORD_CAPTURE_TIMEOUT)) as response:
                 video = response.read()
-        except (OSError, urlerror.URLError) as error:
-            raise ControlError("recording stopped but the MP4 could not be downloaded") from error
-        output = Path(args.output).expanduser().resolve()
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(video)
-        return {
-            "target": structured.get("target"), "path": str(output),
-            "bytes": len(video), "seconds": structured.get("seconds"),
-        }
+        except (OSError, urlerror.URLError, IncompleteRead) as error:
+            raise ControlError("recording stopped but the MP4 could not be downloaded; device copy retained, retry stop-screen-record") from error
+        if isinstance(structured.get("bytes"), int) and len(video) != structured["bytes"]:
+            raise ControlError("recording download was incomplete; device copy retained, retry stop-screen-record")
+        return {"target": target, **save_recording(video, args.output)}
     return structured
